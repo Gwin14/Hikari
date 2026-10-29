@@ -35,3 +35,14 @@ export const fileKey = (uri: string) => `file:${uri}`;
 export const rawUriOf = (p: PhotoItem) => (p.isRaw ? p.uri : p.pair?.isRaw ? p.pair.uri : null);
 export const processedUriOf = (p: PhotoItem) => (!p.isRaw ? p.uri : p.pair && !p.pair.isRaw ? p.pair.uri : null);
 export const hasRaw = (p: PhotoItem) => rawUriOf(p) !== null;
+
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** expo-router hands params back URI-decoded, so `file:` keys holding `%20` etc. must also match decoded. */
+export const keyMatches = (key: string, param: string) => key === param || safeDecode(key) === param;

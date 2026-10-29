@@ -7,7 +7,7 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cachedThumb } from '@/core/thumbs';
-import { hasRaw } from '@/core/sources/types';
+import { hasRaw, keyMatches } from '@/core/sources/types';
 import { prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
 import { useLibrary } from '@/state/library';
 import { CurveEditor } from '@/ui/editor/CurveEditor';
@@ -40,7 +40,7 @@ export default function EditorScreen() {
   const { height, width } = useWindowDimensions();
   const { key } = useLocalSearchParams<{ key: string }>();
   const sequence = useLibrary((s) => s.sequence);
-  const index = sequence.findIndex((i) => i.key === key);
+  const index = sequence.findIndex((i) => keyMatches(i.key, key));
   const item = index >= 0 ? sequence[index] : null;
 
   const recipe = useEditor((s) => s.recipe);
@@ -52,7 +52,7 @@ export default function EditorScreen() {
   const histogram = useEditor((s) => s.histogram);
   const compare = useEditor((s) => s.compare);
   const hasPair = useEditor((s) => s.hasPair);
-  const ready = useEditor((s) => !!s.inputs && s.item?.key === key);
+  const ready = useEditor((s) => !!s.inputs && !!item && s.item?.key === item.key);
   const thumb = useLibrary((s) => (item ? (s.meta.get(item.key)?.thumb ?? null) : null));
   const previewUri = item ? (thumb ?? item.thumbUri ?? cachedThumb(item)) : null;
   const { open, close, undo, redo, setTool, setCompare, auto } = useEditor.getState();

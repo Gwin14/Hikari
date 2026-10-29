@@ -4,7 +4,7 @@ import * as db from '@/core/db/db';
 import type { ColorLabel, Flag, PhotoMeta } from '@/core/db/db';
 import { listLibrary, pairLibraryItems } from '@/core/sources/library';
 import type { PhotoItem } from '@/core/sources/types';
-import { hasRaw } from '@/core/sources/types';
+import { hasRaw, keyMatches } from '@/core/sources/types';
 import { prefs } from './prefs';
 
 export type FilterId = 'all' | 'edited' | 'raw' | 'pairs' | 'favorites' | 'picks' | 'rejected';
@@ -204,7 +204,7 @@ export function findItems(keys: string[]): PhotoItem[] {
   const all = new Map<string, PhotoItem>();
   for (const list of [pairLibraryItems(s.libraryRaw), s.folderItems, s.sequence]) for (const it of list) all.set(it.key, it);
   return keys.flatMap((k) => {
-    const it = all.get(k);
+    const it = all.get(k) ?? [...all.values()].find((i) => keyMatches(i.key, k));
     return it ? [it] : [];
   });
 }
