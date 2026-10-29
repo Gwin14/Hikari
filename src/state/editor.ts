@@ -102,6 +102,8 @@ interface EditorState {
   activeMaskId: string | null;
   maskOverlay: boolean;
   maskBusy: string | null;
+  /** AI masks whose detection found nothing (or failed); not retried until the photo reopens. */
+  maskFailed: string[];
   showClipping: boolean;
   compare: 'off' | 'hold' | 'split';
   clipboard: Clipboard | null;
@@ -138,6 +140,9 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** Grid thumbnails are rendered + JPEG-encoded on the JS thread, so they wait for a pause in editing. */
 let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 let histTimer: ReturnType<typeof setTimeout> | null = null;
+/** AI mask detections in flight, by mask id + source variant. */
+const pendingAi = new Set<string>();
+const AI_MASKS: MaskType[] = ['subject', 'sky', 'background', 'person'];
 let openToken = 0;
 
 const rawOptions = (r: Recipe) => ({
@@ -227,15 +232,9 @@ export const useEditor = create<EditorState>((set, get) => {
           if (img) textures[m.id] = img;
           changed = true;
         }
-      } else if (['subject', 'sky', 'background', 'person'].includes(m.type) && !textures[m.id]) {
-        set({ maskBusy: m.id });
-        try {
-          const img = await aiMaskTexture(item.key, next.source, m, inputs.source);
-          if (img) textures[m.id] = img;
-        } finally {
-          set({ maskBusy: null });
-        }
-        changed = true;
+      } else if (AI_MASKS.includes(m.type) && !textures[m.id] && !get().maskFailed.includes(m.id)) {
+        // runs in the background so edits made meanwhile aren't overwritten when it lands
+        generateAiMask(item.key, next, m, inputs.source);
       }
     }
     for (const id of Object.keys(textures)) if (!next.masks.some((m) => m.id === id)) delete textures[id];
@@ -245,6 +244,33 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ inputs });
       publishInputs(inputs);
     }
+  }
+
+  /** Detects an AI mask once (however many edits arrive meanwhile) and merges it into the current inputs. */
+  async function generateAiMask(itemKey: string, recipe: Recipe, m: Mask, proxy: SkImage) {
+    const job = `${m.id}:${recipe.source.useRaw ? 'r' : 'p'}`;
+    if (pendingAi.has(job)) return;
+    pendingAi.add(job);
+    set({ maskBusy: m.id });
+    let img: SkImage | null = null;
+    try {
+      img = await aiMaskTexture(itemKey, recipe.source, m, proxy);
+    } catch (e) {
+      console.warn('AI mask failed', e);
+    } finally {
+      pendingAi.delete(job);
+      if (get().maskBusy === m.id) set({ maskBusy: null });
+    }
+    const s = get();
+    if (s.item?.key !== itemKey || !s.inputs || !s.recipe) return;
+    if (s.recipe.source.useRaw !== recipe.source.useRaw || !s.recipe.masks.some((x) => x.id === m.id)) return;
+    if (!img) {
+      set({ maskFailed: [...s.maskFailed, m.id] });
+      return;
+    }
+    const inputs = { ...s.inputs, maskTextures: { ...s.inputs.maskTextures, [m.id]: img } };
+    set({ inputs });
+    publishInputs(inputs);
   }
 
   function scheduleSave() {
@@ -331,6 +357,7 @@ export const useEditor = create<EditorState>((set, get) => {
     activeMaskId: null,
     maskOverlay: true,
     maskBusy: null,
+    maskFailed: [],
     showClipping: false,
     compare: 'off',
     clipboard: null,
@@ -353,6 +380,7 @@ export const useEditor = create<EditorState>((set, get) => {
         error: null,
         histogram: null,
         activeMaskId: null,
+        maskFailed: [],
         compare: 'off',
       });
       try {

@@ -32,6 +32,25 @@ describe('auto adjustments', () => {
     expect(Math.abs(neutral.tint)).toBeLessThan(2);
   });
 
+  it('keeps the key of high-key and backlit scenes instead of greying them out', () => {
+    const mix = (parts: [number, number][]) => {
+      const px = new Uint8Array(1000 * 4);
+      let i = 0;
+      for (const [n, v] of parts) for (let k = 0; k < n; k++, i++) px.set([v, v, v, 255], i * 4);
+      return px;
+    };
+    const snow = autoTone(computeHistogram(mix([[800, 215], [200, 90]])));
+    expect(snow.exposure).toBeGreaterThan(-0.6);
+    expect(snow.whites).toBeGreaterThanOrEqual(0);
+    const backlit = autoTone(computeHistogram(mix([[550, 30], [450, 240]])));
+    expect(backlit.exposure).toBeLessThan(0.5); // brightening would blow out the sky
+    expect(backlit.blacks).toBeLessThanOrEqual(0); // never lifts blacks
+  });
+
+  it('leaves strongly colored scenes (sunsets) alone', () => {
+    expect(autoWhiteBalance(solid(32, 32, [230, 140, 70]))).toEqual({ temperature: 0, tint: 0 });
+  });
+
   it('flags clipping in the histogram', () => {
     const h = computeHistogram(solid(8, 8, [255, 255, 255]));
     expect(h.clipHigh).toBe(1);

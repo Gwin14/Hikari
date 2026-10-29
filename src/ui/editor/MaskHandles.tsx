@@ -66,11 +66,27 @@ export function MaskHandles({ view, mask }: { view: SharedValue<ViewTransform>; 
       return { opacity: 1, transform: [{ translateX: sx - DOT / 2 }, { translateY: sy - DOT / 2 }] };
     });
 
-  const p1 = at((g) => [g.x1, g.y1]);
-  const p2 = at((g) => [g.x2, g.y2]);
-  const center = at((g) => [g.cx, g.cy]);
-  const rx = at((g) => [g.cx + g.rx, g.cy]);
-  const ry = at((g) => [g.cx, g.cy + g.ry]);
+  // pickers run inside useAnimatedStyle on the UI thread, so they must be worklets too
+  const p1 = at((g) => {
+    'worklet';
+    return [g.x1, g.y1];
+  });
+  const p2 = at((g) => {
+    'worklet';
+    return [g.x2, g.y2];
+  });
+  const center = at((g) => {
+    'worklet';
+    return [g.cx, g.cy];
+  });
+  const rx = at((g) => {
+    'worklet';
+    return [g.cx + g.rx, g.cy];
+  });
+  const ry = at((g) => {
+    'worklet';
+    return [g.cx, g.cy + g.ry];
+  });
 
   // guide line between linear points
   const line = useAnimatedStyle(() => {

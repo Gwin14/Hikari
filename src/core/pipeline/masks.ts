@@ -55,9 +55,11 @@ const maskDir = () => {
   return d;
 };
 
+/** Bump when the stored mask encoding changes so stale cached masks regenerate. */
+const MASK_CACHE_VERSION = 2;
 const safe = (s: string) => s.replace(/[^a-z0-9]+/gi, '_').slice(-80);
 const maskFile = (photoKey: string, mask: Mask, useRaw: boolean) =>
-  new File(maskDir(), `${safe(photoKey)}-${mask.type}-${useRaw ? 'r' : 'p'}.png`);
+  new File(maskDir(), `${safe(photoKey)}-${mask.type}-${useRaw ? 'r' : 'p'}-v${MASK_CACHE_VERSION}.png`);
 
 async function imageFromFile(uri: string): Promise<SkImage | null> {
   const data = await Skia.Data.fromURI(uri);

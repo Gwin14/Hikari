@@ -1,3 +1,4 @@
+import { wbMultipliers } from '../pipeline/uniforms';
 import type { ColorAdj, Light } from '../recipe/schema';
 
 export interface Histogram {
@@ -47,79 +48,167 @@ export function percentile(bins: Uint32Array, total: number, p: number): number 
 }
 
 const decode = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+const encode = (v: number) => (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = clamp((x - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+/** JS mirror of toneY() in shaders.ts (keep in sync). */
+function toneY(y: number, contrast: number, highlights: number, shadows: number, whites: number, blacks: number): number {
+  const ws = 1 - smoothstep(0, 0.6, y);
+  const wh = smoothstep(0.4, 1, y);
+  y += shadows * 0.45 * ws * ws * (1 - y * 0.5);
+  y += highlights * 0.4 * wh * wh * (highlights < 0 ? Math.max(y, 0.4) : 1 - y * 0.6);
+  y += whites * 0.3 * smoothstep(0.55, 1, y);
+  y += blacks * 0.2 * (1 - smoothstep(0, 0.35, y));
+  const k = contrast >= 0 ? 1 + contrast * 1.2 : 1 / (1 - contrast * 0.8);
+  const yc = clamp(y, 0, 1);
+  const sc = yc < 0.5 ? 0.5 * Math.pow(2 * yc, k) : 1 - 0.5 * Math.pow(2 * (1 - yc), k);
+  return sc + (y - yc);
+}
+
+/** Where an encoded luminance lands after the develop pass's exposure, shoulder and tone stages. */
+function developY(e: number, L: Light): number {
+  let lin = decode(e) * Math.pow(2, L.exposure);
+  if (L.exposure > 0 && lin > 0.8) lin = 0.8 + 0.2 * (1 - Math.exp(-(lin - 0.8) / 0.2));
+  const y = toneY(encode(lin), L.contrast / 100, L.highlights / 100, L.shadows / 100, L.whites / 100, L.blacks / 100);
+  return clamp(y, 0, 1);
+}
+
+/** Bisection for an increasing f on [lo, hi]; returns the bound when the target is out of reach. */
+function solve(f: (x: number) => number, target: number, lo: number, hi: number): number {
+  if (f(lo) >= target) return lo;
+  if (f(hi) <= target) return hi;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
 
 /**
- * Auto tone from the histogram of the *unadjusted* image: exposure brings the log-average
- * luminance toward middle grey, whites/blacks set the end points, highlights/shadows
- * recover detail when the tails are heavy, contrast compensates for flat histograms.
+ * Auto tone from the histogram of the *unadjusted* image. Each slider is solved against a
+ * simulation of the real tone curve, in order: exposure moves the median toward mid grey
+ * (keeping part of the scene's key, and never pushing the bright tenth into clipping),
+ * highlights/shadows recover heavy tails, whites/blacks set the end points (left alone when
+ * the image already reaches them), contrast evens out flat or harsh histograms.
  */
 export function autoTone(h: Histogram): Light {
   const n = h.total || 1;
-  const p01 = percentile(h.l, n, 0.005);
-  const p05 = percentile(h.l, n, 0.05);
-  const p50 = percentile(h.l, n, 0.5);
-  const p95 = percentile(h.l, n, 0.95);
-  const p995 = percentile(h.l, n, 0.995);
+  const q = (p: number) => percentile(h.l, n, p);
+  const p005 = q(0.005);
+  const p05 = q(0.05);
+  const p10 = q(0.1);
+  const p50 = q(0.5);
+  const p90 = q(0.9);
+  const p95 = q(0.95);
+  const p995 = q(0.995);
+  const L: Light = { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 };
 
-  // log-average luminance in linear light
-  let logSum = 0;
-  for (let i = 0; i < 256; i++) if (h.l[i]) logSum += h.l[i] * Math.log(1e-4 + decode(i / 255));
-  const key = Math.exp(logSum / n);
-  const exposure = clamp(Math.log2(0.18 / Math.max(key, 1e-4)) * 0.75, -2.5, 2.5);
+  // exposure: high-key scenes stay bright, low-key ones stay dark-ish
+  const targetMid = 0.46 + (p50 - 0.46) * (p50 > 0.46 ? 0.7 : 0.5);
+  let exposure = solve((x) => developY(p50, { ...L, exposure: x }), targetMid, -2, 2);
+  if (exposure > 0) {
+    // brightening must not blow out what is already bright (windows, lights, sky)
+    const cap = (p: number, top: number) => (p < top ? solve((x) => developY(p, { ...L, exposure: x }), top, 0, 2) : 0.3);
+    exposure = Math.min(exposure, cap(p90, 0.93), cap(p95, 0.97));
+  }
+  L.exposure = Math.round(exposure * 100) / 100;
 
-  // after the exposure shift, estimate where the ends will land (approximate, in encoded space)
-  const gain = Math.pow(2, exposure / 2.2);
-  const top = clamp(p995 * gain, 0, 1.5);
-  const bottom = clamp(p01 * gain, 0, 1);
+  // highlights: pull the bright tenth down when it sits high or the image clips
+  const y90 = developY(p90, L);
+  L.highlights = -clamp((y90 - 0.82) * 250 + Math.max(0, h.clipHigh - 0.005) * 150, 0, 60);
 
-  const highlights = clamp(-(Math.max(0, percentile(h.l, n, 0.9) * gain - 0.8)) * 220 - h.clipHigh * 300, -80, 0);
-  const shadows = clamp((0.22 - p05 * gain) * 160, 0, 60);
-  const whites = clamp((0.97 - top) * 120, -40, 50);
-  const blacks = clamp((0.02 - bottom) * 400, -40, 30);
-  const spread = p95 - p05;
-  const contrast = clamp((0.62 - spread) * 60 + (p50 < 0.3 || p50 > 0.7 ? -5 : 0), -20, 30);
+  // shadows: lift a crushed dark tenth, less so when most of the frame is dark on purpose
+  let dark = 0;
+  for (let i = 0; i < 256; i++) if (developY(i / 255, L) < 0.08) dark += h.l[i];
+  const lowKey = clamp(1.5 - (2 * dark) / n, 0.25, 1);
+  L.shadows = clamp((0.12 - developY(p10, L)) * 220, 0, 35) * lowKey;
+
+  // whites / blacks: only extend the end points the image doesn't reach (anymore)
+  if (developY(p995, L) < 0.96) L.whites = solve((x) => developY(p995, { ...L, whites: x }), 0.965, 0, 40);
+  if (developY(p005, L) > 0.03) {
+    L.blacks = -solve((x) => -developY(p005, { ...L, blacks: -x }), -0.025, 0, 40);
+  }
+
+  // contrast: aim for a natural spread between the 5th and 95th percentiles
+  const spread = developY(p95, L) - developY(p05, L);
+  L.contrast = clamp((0.72 - spread) * 70, -15, 25);
 
   const r = (v: number) => Math.round(v);
   return {
-    exposure: Math.round(exposure * 100) / 100,
-    contrast: r(contrast),
-    highlights: r(highlights),
-    shadows: r(shadows),
-    whites: r(whites),
-    blacks: r(blacks),
+    exposure: L.exposure,
+    contrast: r(L.contrast),
+    highlights: r(L.highlights),
+    shadows: r(L.shadows),
+    whites: r(L.whites),
+    blacks: r(L.blacks),
   };
 }
 
 /**
- * Auto white balance: gray-world over pixels that are neither clipped nor very dark nor
- * strongly saturated (those are rarely neutral), mapped back onto temperature/tint sliders.
+ * Auto white balance: weighted gray-world over well-exposed, near-neutral pixels (strongly
+ * colored ones — foliage, sky, sunsets — are rarely neutral and are ignored). The slider
+ * values that neutralize that average are solved through the same wbMultipliers() the
+ * shader uses, then damped: the average is only a guess, and warm casts are usually wanted.
  */
 export function autoWhiteBalance(px: Uint8Array | Uint8ClampedArray, step = 2): Pick<ColorAdj, 'temperature' | 'tint'> {
   let sr = 0;
   let sg = 0;
   let sb = 0;
+  let sw = 0;
   let count = 0;
+  let total = 0;
   for (let i = 0; i < px.length; i += 4 * step) {
+    total++;
     const R = px[i] / 255;
     const G = px[i + 1] / 255;
     const B = px[i + 2] / 255;
     const mx = Math.max(R, G, B);
     const mn = Math.min(R, G, B);
-    if (mx > 0.97 || mx < 0.08) continue;
-    if ((mx - mn) / mx > 0.45) continue;
-    sr += decode(R);
-    sg += decode(G);
-    sb += decode(B);
+    if (mx > 0.96 || mx < 0.06) continue;
+    const sat = (mx - mn) / mx;
+    if (sat > 0.35) continue;
+    const w = (1 - sat / 0.35) ** 2 * (0.3 + mx);
+    sr += decode(R) * w;
+    sg += decode(G) * w;
+    sb += decode(B) * w;
+    sw += w;
     count++;
   }
-  if (count < 50) return { temperature: 0, tint: 0 };
-  const r = sr / count;
-  const g = sg / count;
-  const b = sb / count;
-  // Blue/red ratio drives temperature (cool cast → warm correction), green drives tint.
-  const temperature = clamp(Math.log2(b / r) * 85, -100, 100);
-  const tint = clamp(Math.log2(g / Math.sqrt(r * b)) * 140, -100, 100);
+  if (count < 50 || sw <= 0) return { temperature: 0, tint: 0 };
+  const lr = Math.log(sr / sw);
+  const lg = Math.log(sg / sw);
+  const lb = Math.log(sb / sw);
+  const err = (t: number, n: number) => {
+    const m = wbMultipliers(t, n);
+    const g = lg + Math.log(m[1]);
+    return (lr + Math.log(m[0]) - g) ** 2 + (lb + Math.log(m[2]) - g) ** 2;
+  };
+  let bt = 0;
+  let bn = 0;
+  let best = err(0, 0);
+  for (const [stepSize, span] of [[4, 100], [1, 4]] as const) {
+    const ct = bt;
+    const cn = bn;
+    for (let t = Math.max(-100, ct - span); t <= Math.min(100, ct + span); t += stepSize)
+      for (let n = Math.max(-100, cn - span); n <= Math.min(100, cn + span); n += stepSize) {
+        const e = err(t, n);
+        if (e < best) {
+          best = e;
+          bt = t;
+          bn = n;
+        }
+      }
+  }
+  // fewer neutral pixels → less confidence in the estimate
+  const confidence = clamp(count / (total * 0.15), 0, 1);
+  const k = 0.75 * confidence;
+  const temperature = clamp(bt * k * (bt < 0 ? 0.6 : 1), -60, 60);
+  const tint = clamp(bn * k * 0.8, -40, 40);
   return { temperature: Math.round(temperature), tint: Math.round(tint) };
 }
 

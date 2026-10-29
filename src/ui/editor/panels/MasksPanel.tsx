@@ -34,6 +34,7 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
   const activeId = useEditor((s) => s.activeMaskId);
   const busy = useEditor((s) => s.maskBusy);
   const overlay = useEditor((s) => s.maskOverlay);
+  const failed = useEditor((s) => s.maskFailed);
   const { addMask, setActiveMask, removeMask, updateMask, setMaskOverlay } = useEditor.getState();
   const active = recipe.masks.find((m) => m.id === activeId) ?? null;
   const index = active ? recipe.masks.indexOf(active) : -1;
@@ -79,6 +80,7 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
           recipe={recipe}
           brush={brush}
           overlay={overlay}
+          status={busy === active.id ? t('masks.detecting') : failed.includes(active.id) ? t('masks.notFound') : null}
           onOverlay={setMaskOverlay}
           onUpdate={(fn) => updateMask(active.id, fn)}
           onRemove={() => removeMask(active.id)}
@@ -94,6 +96,8 @@ function MaskEditor(p: {
   recipe: Recipe;
   brush: SharedValue<BrushSettings>;
   overlay: boolean;
+  /** AI detection progress / failure message. */
+  status: string | null;
   onOverlay(v: boolean): void;
   onUpdate(fn: (m: Mask) => Mask): void;
   onRemove(): void;
@@ -111,6 +115,7 @@ function MaskEditor(p: {
         <View style={{ flex: 1 }} />
         <IconButton icon="trash-outline" color={colors.danger} onPress={p.onRemove} label={t('common.delete')} />
       </View>
+      {p.status && <Text style={styles.empty}>{p.status}</Text>}
       {m.type === 'brush' && <BrushControls brush={p.brush} />}
       {m.type === 'color' && <Text style={styles.empty}>{t('masks.pickColor')}</Text>}
       {(m.type === 'luminance' || m.type === 'color' || m.type === 'linear' || m.type === 'radial') && (
