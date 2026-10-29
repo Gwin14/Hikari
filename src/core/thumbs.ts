@@ -2,7 +2,7 @@ import { ImageFormat } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
 import { isNativeAvailable } from 'hikari-native';
 
-import { loadSource } from './image/load';
+import { decodeSourceUncached } from './image/load';
 import { createRecipe } from './recipe/defaults';
 import type { PhotoItem } from './sources/types';
 
@@ -10,11 +10,17 @@ import type { PhotoItem } from './sources/types';
  * Thumbnails for files the platform can't preview (proprietary RAW). Decoded through the
  * native RAW engine at small size, encoded to JPEG and cached on disk.
  */
+let thumbDir: Directory | null = null;
 const dir = () => {
-  const d = new Directory(Paths.cache, 'rawthumbs');
-  if (!d.exists) d.create({ intermediates: true, idempotent: true });
-  return d;
+  if (!thumbDir) {
+    thumbDir = new Directory(Paths.cache, 'rawthumbs');
+    if (!thumbDir.exists) thumbDir.create({ intermediates: true, idempotent: true });
+  }
+  return thumbDir;
 };
+
+/** Key → cached uri (or null when known missing), so grid cells skip the sync disk check. */
+const known = new Map<string, string | null>();
 
 const hash = (s: string) => {
   let h = 2166136261;
@@ -39,8 +45,12 @@ function pump() {
 }
 
 export function cachedThumb(item: PhotoItem): string | null {
+  const hit = known.get(item.key);
+  if (hit !== undefined) return hit;
   const f = new File(dir(), `${hash(item.key)}.jpg`);
-  return f.exists ? f.uri : null;
+  const uri = f.exists ? f.uri : null;
+  known.set(item.key, uri);
+  return uri;
 }
 
 export function requestThumb(item: PhotoItem): Promise<string | null> {
@@ -61,9 +71,10 @@ export function requestThumb(item: PhotoItem): Promise<string | null> {
           useRaw: true,
           isRaw: item.isRaw,
         }).source;
-        const prepared = await loadSource(src, 384);
+        const prepared = await decodeSourceUncached(src, 384);
         const f = new File(dir(), `${hash(item.key)}.jpg`);
         f.write(prepared.source.encodeToBytes(ImageFormat.JPEG, 80));
+        known.set(item.key, f.uri);
         resolve(f.uri);
       } catch {
         resolve(null);
@@ -78,6 +89,8 @@ export function requestThumb(item: PhotoItem): Promise<string | null> {
 }
 
 export function clearThumbCaches() {
+  known.clear();
+  thumbDir = null;
   for (const name of ['rawthumbs', 'thumbs']) {
     const d = new Directory(Paths.cache, name);
     if (d.exists) d.delete();

@@ -1,14 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
-import type { ReactNode } from 'react';
+import { BottomTabBarHeightContext } from 'expo-router/tabs';
+import { useContext, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { PhotoItem } from '@/core/sources/types';
 import { useLibrary, type FilterId, type SortId, type ViewFilter } from '@/state/library';
 import { Chip, ChipRow, IconButton } from './kit';
-import { colors, font, space } from './theme';
+import { colors, font, radius, space } from './theme';
 
 /** Header shared by the Gallery and Folders browsers so both modes look the same. */
 export function BrowserHeader(props: { title: string; subtitle?: string; onTitlePress?: () => void; left?: ReactNode; right?: ReactNode }) {
@@ -17,11 +20,15 @@ export function BrowserHeader(props: { title: string; subtitle?: string; onTitle
     <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
       {props.left}
       <Pressable style={{ flex: 1 }} onPress={props.onTitlePress} disabled={!props.onTitlePress}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={styles.title} numberOfLines={1}>
             {props.title}
           </Text>
-          {props.onTitlePress && <Ionicons name="chevron-down" size={18} color={colors.textDim} />}
+          {props.onTitlePress && (
+            <View style={styles.titleChevron}>
+              <Ionicons name="chevron-down" size={14} color={colors.text} />
+            </View>
+          )}
         </View>
         {props.subtitle ? <Text style={styles.subtitle}>{props.subtitle}</Text> : null}
       </Pressable>
@@ -60,6 +67,8 @@ export function FilterBar({ value, onChange }: { value: ViewFilter; onChange(v: 
 export function SelectionBar({ items }: { items: PhotoItem[] }) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  // inside the tabs the bar floats above the (absolute) tab bar; elsewhere above the home indicator
+  const tabBar = useContext(BottomTabBarHeightContext) ?? 0;
   const selection = useLibrary((s) => s.selection);
   const selecting = useLibrary((s) => s.selecting);
   const { clearSelection, selectAll, setMeta } = useLibrary.getState();
@@ -68,7 +77,12 @@ export function SelectionBar({ items }: { items: PhotoItem[] }) {
   const exportSel = () => router.push({ pathname: '/export', params: { keys: chosen.map((c) => c.key).join('\n') } });
   const pasteSel = () => router.push({ pathname: '/batch', params: { keys: chosen.map((c) => c.key).join('\n') } });
   return (
-    <View style={[styles.selBar, { paddingBottom: insets.bottom + 8 }]}>
+    <Animated.View
+      entering={FadeInDown.duration(200)}
+      exiting={FadeOutDown.duration(150)}
+      style={[styles.selBar, { bottom: (tabBar || insets.bottom) + space.sm }]}
+    >
+      {Platform.OS === 'ios' && <BlurView tint="systemChromeMaterialDark" intensity={90} style={StyleSheet.absoluteFill} />}
       <IconButton icon="close" onPress={clearSelection} label={t('common.cancel')} />
       <Text style={styles.selCount}>{t('common.selected', { count: chosen.length })}</Text>
       <IconButton icon="checkmark-done" onPress={() => selectAll(items.map((i) => i.key))} label={t('common.all')} />
@@ -76,7 +90,7 @@ export function SelectionBar({ items }: { items: PhotoItem[] }) {
       <IconButton icon="close-circle" onPress={() => chosen.forEach((c) => setMeta(c, { flag: -1 }))} label={t('culling.reject')} />
       <IconButton icon="clipboard" onPress={pasteSel} disabled={!chosen.length} label={t('editor.paste')} />
       <IconButton icon="share-outline" onPress={exportSel} disabled={!chosen.length} active label={t('export.title')} />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -89,21 +103,31 @@ const styles = StyleSheet.create({
     gap: space.sm,
     backgroundColor: colors.bg,
   },
-  title: { color: colors.text, fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
-  subtitle: { color: colors.textDim, fontSize: font.sm, marginTop: 2 },
+  title: { color: colors.text, fontSize: 32, fontWeight: '800', letterSpacing: -0.8, flexShrink: 1 },
+  titleChevron: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  subtitle: { color: colors.textDim, fontSize: font.sm, fontWeight: '500', marginTop: 2 },
   selBar: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
+    left: space.md,
+    right: space.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: space.md,
-    paddingTop: space.sm,
-    backgroundColor: colors.surface,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    gap: 2,
+    paddingHorizontal: space.sm,
+    paddingVertical: 6,
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.glass,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   selCount: { flex: 1, color: colors.text, fontSize: font.md, fontWeight: '600' },
 });

@@ -1,11 +1,14 @@
+import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { cachedThumb } from '@/core/thumbs';
 import { hasRaw } from '@/core/sources/types';
-import { useEditor, type ToolId } from '@/state/editor';
+import { prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
 import { useLibrary } from '@/state/library';
 import { CurveEditor } from '@/ui/editor/CurveEditor';
 import { EditorCanvas } from '@/ui/editor/EditorCanvas';
@@ -28,7 +31,7 @@ import { MasksPanel, useBrush } from '@/ui/editor/panels/MasksPanel';
 import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
 import { ToolBar } from '@/ui/editor/ToolBar';
 import { Button, IconButton } from '@/ui/kit';
-import { colors, common, font, space } from '@/ui/theme';
+import { colors, common, font, radius, space } from '@/ui/theme';
 
 export default function EditorScreen() {
   const { t } = useTranslation();
@@ -48,6 +51,9 @@ export default function EditorScreen() {
   const histogram = useEditor((s) => s.histogram);
   const compare = useEditor((s) => s.compare);
   const hasPair = useEditor((s) => s.hasPair);
+  const ready = useEditor((s) => !!s.inputs && s.item?.key === key);
+  const thumb = useLibrary((s) => (item ? (s.meta.get(item.key)?.thumb ?? null) : null));
+  const previewUri = item ? (thumb ?? item.thumbUri ?? cachedThumb(item)) : null;
   const { open, close, undo, redo, setTool, setCompare, auto } = useEditor.getState();
   const [sheet, setSheet] = useState<'menu' | 'copy' | 'snapshots' | 'info' | null>(null);
   const [showHist, setShowHist] = useState(true);
@@ -57,6 +63,14 @@ export default function EditorScreen() {
     if (item) open(item);
   }, [item?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => close(), [close]);
+  // Once this photo is on screen, decode its neighbours so stepping through is instant.
+  useEffect(() => {
+    if (!ready) return;
+    const next = sequence[index + 1];
+    const prev = sequence[index - 1];
+    if (next) prefetchPhoto(next);
+    if (prev) prefetchPhoto(prev);
+  }, [ready, index, sequence]);
 
   const landscape = width > height;
   const panelHeight = landscape ? undefined : Math.round(height * 0.34);
@@ -140,20 +154,32 @@ export default function EditorScreen() {
       <View style={[styles.body, landscape && { flexDirection: 'row' }]}>
         <View style={{ flex: 1 }}>
           <EditorCanvas brush={brush} />
+          {!ready && previewUri && (
+            // the grid thumbnail stands in (already in memory) while the full preview decodes
+            <Animated.View style={[StyleSheet.absoluteFill, styles.preview]} exiting={FadeOut.duration(180)} pointerEvents="none">
+              <Image source={{ uri: previewUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" priority="high" />
+            </Animated.View>
+          )}
           {showHist && (
             <View style={styles.hist} pointerEvents="box-none">
               <HistogramView histogram={histogram} />
             </View>
           )}
-          {(loading || error) && (
+          {loading && (
+            <Animated.View entering={FadeIn.delay(150)} exiting={FadeOut} style={styles.loadingPill} pointerEvents="none">
+              <ActivityIndicator size="small" color={colors.accent} />
+              {hasRaw(item) && <Text style={styles.loading}>{t('editor.unsavedRaw')}</Text>}
+            </Animated.View>
+          )}
+          {error && (
             <View style={[StyleSheet.absoluteFill, common.center]} pointerEvents="none">
-              {loading ? <ActivityIndicator color={colors.accent} /> : <Text style={styles.error}>{error}</Text>}
-              {loading && item && hasRaw(item) && <Text style={styles.loading}>{t('editor.unsavedRaw')}</Text>}
+              <Text style={styles.error}>{error}</Text>
             </View>
           )}
         </View>
         <View style={[styles.panel, landscape ? { width: 360 } : { height: panelHeight }]}>
-          {tool === 'curves' || tool === 'grading' ? <PanelScroll>{panel}</PanelScroll> : <PanelScroll>{panel}</PanelScroll>}
+          <View style={styles.grabber} />
+          <PanelScroll>{panel}</PanelScroll>
         </View>
       </View>
       <View style={[styles.tools, { paddingBottom: insets.bottom }]}>
@@ -165,12 +191,32 @@ export default function EditorScreen() {
 }
 
 const styles = StyleSheet.create({
-  top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, height: 48 },
-  name: { color: colors.textDim, fontSize: font.xs, textAlign: 'center' },
+  top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, height: 52 },
+  name: { color: colors.textDim, fontSize: font.xs, fontWeight: '600', textAlign: 'center', letterSpacing: 0.2 },
   body: { flex: 1 },
+  preview: { backgroundColor: colors.bg },
   hist: { position: 'absolute', top: space.sm, left: space.sm },
-  panel: { backgroundColor: colors.surface, borderTopLeftRadius: 14, borderTopRightRadius: 14 },
-  tools: { backgroundColor: colors.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  panel: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.surface3, marginTop: space.sm },
+  tools: { backgroundColor: colors.surface },
   error: { color: colors.danger, fontSize: font.md, padding: space.xl, textAlign: 'center' },
-  loading: { color: colors.textDim, fontSize: font.sm, marginTop: space.sm },
+  loadingPill: {
+    position: 'absolute',
+    top: space.md,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.glass,
+  },
+  loading: { color: colors.textDim, fontSize: font.xs },
 });

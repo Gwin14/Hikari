@@ -41,10 +41,25 @@ export function loadSource(src: SourceRef, maxDim: number, raw?: RawDecodeOption
     p = decode(t, maxDim, raw);
     cache.set(key, p);
     p.catch(() => cache.delete(key));
-    // Keep only a few decoded sources resident.
+    // Keep only a few decoded sources resident (current photo + prefetched neighbours).
     if (cache.size > 4) cache.delete(cache.keys().next().value!);
+  } else {
+    // refresh LRU position
+    cache.delete(key);
+    cache.set(key, p);
   }
   return p;
+}
+
+/** Decode without touching the editor's source cache (grid thumbnails, prefetch misses). */
+export function decodeSourceUncached(src: SourceRef, maxDim: number): Promise<PreparedSource> {
+  return decode(decodeTarget(src), maxDim);
+}
+
+/** True when a decode for these exact parameters is already cached or in flight. */
+export function hasSource(src: SourceRef, maxDim: number, raw?: RawDecodeOptions): boolean {
+  const t = decodeTarget(src);
+  return cache.has(`${t.uri}|${t.preferRaw}|${maxDim}|${raw ? JSON.stringify(raw) : ''}`);
 }
 
 export function evictSource(src: SourceRef) {

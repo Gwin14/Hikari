@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
-import { memo, useEffect, useState, type ReactElement } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 import type { PhotoMeta } from '@/core/db/db';
 import type { PhotoItem } from '@/core/sources/types';
 import { cachedThumb, requestThumb } from '@/core/thumbs';
-import { colors, font } from './theme';
+import { colors, font, radius } from './theme';
 
 const LABEL_COLORS: Record<string, string> = {
   red: '#FF5A5F',
@@ -27,14 +28,26 @@ export interface PhotoGridProps {
   onEndReached?: () => void;
   header?: ReactElement | null;
   empty?: ReactElement | null;
+  /** Show placeholder cells instead of `empty` while the first page loads. */
+  loading?: boolean;
   columns?: number;
 }
+
+const GAP = 2;
 
 /** The single photo grid used by both the Gallery and Folders modes. */
 export function PhotoGrid(p: PhotoGridProps) {
   const { width } = useWindowDimensions();
-  const columns = p.columns ?? (width > 900 ? 7 : width > 600 ? 5 : 3);
-  const size = Math.floor((width - (columns - 1) * 2) / columns);
+  const columns = p.columns ?? (width > 900 ? 7 : width > 600 ? 5 : 4);
+  const size = Math.floor((width - (columns - 1) * GAP) / columns);
+  // Cells get stable callbacks so memoized thumbnails only re-render when their own data changes.
+  const handlers = useRef(p);
+  useLayoutEffect(() => {
+    handlers.current = p;
+  });
+  const onPress = useCallback((item: PhotoItem, index: number) => handlers.current.onPress(item, index), []);
+  const onLongPress = useCallback((item: PhotoItem) => handlers.current.onLongPress(item), []);
+  const showSkeleton = p.loading && p.items.length === 0;
   return (
     <FlashList
       data={p.items}
@@ -43,32 +56,51 @@ export function PhotoGrid(p: PhotoGridProps) {
       extraData={[p.meta, p.selection, p.selecting, size]}
       onEndReached={p.onEndReached}
       onEndReachedThreshold={1.5}
+      drawDistance={size * 6}
       ListHeaderComponent={p.header}
-      ListEmptyComponent={p.empty}
-      contentContainerStyle={{ paddingBottom: 120 }}
+      ListEmptyComponent={showSkeleton ? <Skeleton size={size} columns={columns} /> : p.empty}
+      contentContainerStyle={{ paddingBottom: 140 }}
       renderItem={({ item, index }) => (
         <Thumb
           item={item}
+          index={index}
           size={size}
           meta={p.meta.get(item.key)}
           selected={p.selection.has(item.key)}
           selecting={p.selecting}
-          onPress={() => p.onPress(item, index)}
-          onLongPress={() => p.onLongPress(item)}
+          onPress={onPress}
+          onLongPress={onLongPress}
         />
       )}
     />
   );
 }
 
+/** Pulsing placeholder cells shown while the first page of photos is listed. */
+function Skeleton({ size, columns }: { size: number; columns: number }) {
+  const pulse = useSharedValue(0.35);
+  useEffect(() => {
+    pulse.set(withRepeat(withTiming(0.7, { duration: 700 }), -1, true));
+  }, [pulse]);
+  const style = useAnimatedStyle(() => ({ opacity: pulse.value }));
+  return (
+    <Animated.View style={[styles.skeleton, style]}>
+      {Array.from({ length: columns * 6 }, (_, i) => (
+        <View key={i} style={{ width: size, height: size, backgroundColor: colors.surface2 }} />
+      ))}
+    </Animated.View>
+  );
+}
+
 const Thumb = memo(function Thumb(props: {
   item: PhotoItem;
+  index: number;
   size: number;
   meta?: PhotoMeta;
   selected: boolean;
   selecting: boolean;
-  onPress(): void;
-  onLongPress(): void;
+  onPress(item: PhotoItem, index: number): void;
+  onLongPress(item: PhotoItem): void;
 }) {
   const { item, meta, size } = props;
   const [generated, setGenerated] = useState<string | null>(() => (item.thumbUri ? null : cachedThumb(item)));
@@ -84,10 +116,10 @@ const Thumb = memo(function Thumb(props: {
   const uri = meta?.thumb ?? item.thumbUri ?? generated;
   return (
     <Pressable
-      onPress={props.onPress}
-      onLongPress={props.onLongPress}
+      onPress={() => props.onPress(item, props.index)}
+      onLongPress={() => props.onLongPress(item)}
       delayLongPress={300}
-      style={{ width: size, height: size, marginRight: 2, marginBottom: 2 }}
+      style={({ pressed }) => [{ width: size, height: size, marginBottom: GAP, opacity: pressed ? 0.75 : 1 }]}
     >
       {uri ? (
         <Image
@@ -95,8 +127,9 @@ const Thumb = memo(function Thumb(props: {
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           recyclingKey={item.key}
-          transition={120}
+          transition={{ duration: 150, skipOnCacheHit: 'memory' }}
           cachePolicy="memory-disk"
+          priority="high"
         />
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.placeholder]}>
@@ -134,13 +167,15 @@ const styles = StyleSheet.create({
   badge: {
     fontSize: 9,
     fontWeight: '800',
+    letterSpacing: 0.3,
     color: colors.text,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    borderRadius: 3,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
     overflow: 'hidden',
   },
+  skeleton: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
   icon: { textShadowColor: '#000', textShadowRadius: 3 },
   bottom: { position: 'absolute', bottom: 3, left: 4, right: 4, flexDirection: 'row', alignItems: 'center', gap: 4 },
   stars: { color: colors.accent, fontSize: 10, textShadowColor: '#000', textShadowRadius: 2 },
@@ -160,5 +195,5 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.3)',
   },
   checkOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  selectedTint: { ...StyleSheet.absoluteFill, borderWidth: 2, borderColor: colors.accent },
+  selectedTint: { ...StyleSheet.absoluteFill, borderWidth: 3, borderColor: colors.accent, backgroundColor: 'rgba(255,181,71,0.12)' },
 });
