@@ -2,16 +2,19 @@ import { StyleSheet } from 'react-native';
 
 /** Dark, low-distraction palette: the photo is the brightest thing on screen. */
 export const colors = {
-  bg: '#0B0B0C',
-  surface: '#151517',
-  surface2: '#1E1E21',
-  surface3: '#2A2A2E',
-  border: '#2E2E33',
-  text: '#F2F2F3',
-  textDim: '#9A9AA2',
-  textFaint: '#5E5E66',
+  bg: '#000000',
+  surface: '#111113',
+  surface2: '#1C1C1F',
+  surface3: '#2B2B30',
+  border: 'rgba(255,255,255,0.08)',
+  text: '#F5F5F7',
+  textDim: '#A1A1AA',
+  textFaint: '#5F5F68',
   accent: '#FFB547',
   accentDim: '#7A5A2A',
+  accentSoft: 'rgba(255,181,71,0.16)',
+  /** Translucent chrome floating over photos (fallback where blur isn't available). */
+  glass: 'rgba(22,22,26,0.82)',
   danger: '#FF5C5C',
   success: '#5BD18B',
   red: '#FF5A5F',
@@ -21,7 +24,7 @@ export const colors = {
 } as const;
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
-export const radius = { sm: 6, md: 10, lg: 16, pill: 999 } as const;
+export const radius = { sm: 8, md: 12, lg: 18, xl: 24, pill: 999 } as const;
 export const font = {
   xs: 11,
   sm: 13,
@@ -37,6 +40,6 @@ export const common = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   center: { alignItems: 'center', justifyContent: 'center' },
   label: { color: colors.textDim, fontSize: font.sm },
-  title: { color: colors.text, fontSize: font.xl, fontWeight: '700' },
+  title: { color: colors.text, fontSize: font.xl, fontWeight: '700', letterSpacing: -0.3 },
   text: { color: colors.text, fontSize: font.md },
 });

@@ -74,9 +74,15 @@ export function Segmented<T extends string | number>(props: {
 
 export function Chip(props: { label: string; active?: boolean; onPress?: () => void; icon?: IconName; color?: string }) {
   return (
-    <Pressable onPress={props.onPress} style={[styles.chip, props.active && styles.chipOn]}>
+    <Pressable
+      onPress={() => {
+        tick();
+        props.onPress?.();
+      }}
+      style={({ pressed }) => [styles.chip, props.active && styles.chipOn, pressed && { opacity: 0.7 }]}
+    >
       {props.icon && <Ionicons name={props.icon} size={14} color={props.active ? colors.bg : (props.color ?? colors.textDim)} />}
-      <Text style={[styles.chipText, props.active && { color: colors.bg }]}>{props.label}</Text>
+      <Text style={[styles.chipText, props.active && styles.chipTextOn]}>{props.label}</Text>
     </Pressable>
   );
 }
@@ -161,20 +167,23 @@ const styles = StyleSheet.create({
   iconBtn: { padding: 6, alignItems: 'center', justifyContent: 'center' },
   segmented: { flexDirection: 'row', backgroundColor: colors.surface2, borderRadius: radius.md, padding: 2 },
   segment: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: radius.md - 2 },
-  segmentOn: { backgroundColor: colors.surface3 },
+  segmentOn: { backgroundColor: colors.surface3, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
   segmentText: { color: colors.textDim, fontSize: font.sm, fontWeight: '500' },
   segmentTextOn: { color: colors.text },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: radius.pill,
     backgroundColor: colors.surface2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  chipOn: { backgroundColor: colors.accent },
-  chipText: { color: colors.text, fontSize: font.sm, fontWeight: '500' },
+  chipOn: { backgroundColor: colors.text, borderColor: colors.text },
+  chipText: { color: colors.textDim, fontSize: font.sm, fontWeight: '600' },
+  chipTextOn: { color: colors.bg },
   chipRow: { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm },
   sectionTitle: {
     flexDirection: 'row',
@@ -200,12 +209,18 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: radius.md,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface2,
   },
   buttonPrimary: { backgroundColor: colors.accent },
   buttonText: { color: colors.text, fontSize: font.md, fontWeight: '600' },
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, overflow: 'hidden' },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
 });

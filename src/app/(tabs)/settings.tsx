@@ -24,7 +24,7 @@ export default function SettingsScreen() {
   return (
     <View style={common.screen}>
       <BrowserHeader title={t('settings.title')} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: 60 }}>
+      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: 120 }}>
         {!isNativeAvailable && (
           <Card style={{ padding: space.md }}>
             <Text style={{ color: colors.accent, fontSize: font.sm }}>{t('settings.nativeMissing')}</Text>

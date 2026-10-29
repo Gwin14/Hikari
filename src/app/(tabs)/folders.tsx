@@ -45,7 +45,7 @@ export default function FoldersScreen() {
       <FlatList
         data={folders}
         keyExtractor={(f) => f.id}
-        contentContainerStyle={{ padding: space.lg, gap: space.sm, flexGrow: 1 }}
+        contentContainerStyle={{ padding: space.lg, gap: space.sm, flexGrow: 1, paddingBottom: 120 }}
         ListEmptyComponent={
           <View style={[common.center, { flex: 1, paddingHorizontal: space.xl }]}>
             <Ionicons name="folder-open-outline" size={56} color={colors.textFaint} />
@@ -60,7 +60,9 @@ export default function FoldersScreen() {
             onPress={() => router.push({ pathname: '/folder/[id]', params: { id: item.id } })}
             onLongPress={() => remove(item)}
           >
-            <Ionicons name="folder" size={28} color={colors.accent} />
+            <View style={styles.folderIcon}>
+              <Ionicons name="folder" size={22} color={colors.accent} />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.name} numberOfLines={1}>
                 {item.name}
@@ -86,6 +88,16 @@ const styles = StyleSheet.create({
     padding: space.md,
     borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  folderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   name: { color: colors.text, fontSize: font.md, fontWeight: '600' },
   uri: { color: colors.textFaint, fontSize: font.xs, marginTop: 2 },

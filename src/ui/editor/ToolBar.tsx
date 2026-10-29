@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
-import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { ToolId } from '@/state/editor';
 import { tick, type IconName } from '../kit';
-import { colors, space } from '../theme';
+import { colors, radius, space } from '../theme';
 
 export const TOOLS: { id: ToolId; icon: IconName; label: string }[] = [
   { id: 'presets', icon: 'albums-outline', label: 'tools.presets' },
@@ -38,7 +38,9 @@ export function ToolBar({ value, onChange, showRaw }: { value: ToolId; onChange(
               onChange(tool.id);
             }}
           >
-            <Ionicons name={tool.icon} size={22} color={on ? colors.accent : colors.textDim} />
+            <View style={[styles.iconWrap, on && styles.iconOn]}>
+              <Ionicons name={tool.icon} size={21} color={on ? colors.accent : colors.textDim} />
+            </View>
             <Text style={[styles.label, on && { color: colors.accent }]} numberOfLines={1}>
               {t(tool.label)}
             </Text>
@@ -51,6 +53,8 @@ export function ToolBar({ value, onChange, showRaw }: { value: ToolId; onChange(
 
 const styles = StyleSheet.create({
   bar: { paddingHorizontal: space.sm, gap: 2 },
-  tool: { width: 66, alignItems: 'center', paddingVertical: space.sm, gap: 4 },
+  tool: { width: 64, alignItems: 'center', paddingVertical: space.sm, gap: 3 },
+  iconWrap: { width: 44, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
+  iconOn: { backgroundColor: colors.accentSoft },
   label: { color: colors.textDim, fontSize: 10, fontWeight: '600' },
 });

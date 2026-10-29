@@ -11,7 +11,7 @@ import { applyFilter, defaultFilter, useLibrary, type ViewFilter } from '@/state
 import { BrowserHeader, FilterBar, SelectionBar } from '@/ui/BrowserChrome';
 import { Button, IconButton, ListRow } from '@/ui/kit';
 import { PhotoGrid } from '@/ui/PhotoGrid';
-import { colors, common, font, space } from '@/ui/theme';
+import { colors, common, font, radius, space } from '@/ui/theme';
 
 export default function LibraryScreen() {
   const { t } = useTranslation();
@@ -24,7 +24,8 @@ export default function LibraryScreen() {
   const meta = useLibrary((s) => s.meta);
   const selection = useLibrary((s) => s.selection);
   const selecting = useLibrary((s) => s.selecting);
-  const { loadLibrary, setSequence, toggleSelect, setSelecting } = useLibrary.getState();
+  const loading = useLibrary((s) => s.libraryLoading);
+  const { loadLibrary, refreshLibrary, setSequence, toggleSelect, setSelecting } = useLibrary.getState();
 
   const granted = permission?.granted;
   const sort = filter.sort === 'oldest' ? 'oldest' : 'newest';
@@ -33,7 +34,8 @@ export default function LibraryScreen() {
     if (!granted) return;
     loadLibrary(albumId, sort, true);
     listAlbums().then(setAlbums).catch(() => setAlbums([]));
-    const sub = addListener(() => loadLibrary(useLibrary.getState().albumId, sort, true));
+    // new/deleted photos: re-list in place (debounced) instead of resetting the grid to page one
+    const sub = addListener(() => refreshLibrary(sort));
     return () => sub.remove();
   }, [granted, sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -53,8 +55,9 @@ export default function LibraryScreen() {
     router.push({ pathname: '/editor/[key]', params: { key: item.key } });
   };
 
-  if (!permission) return <View style={common.screen} />;
-  if (!granted) {
+  // while the permission check resolves, the cached snapshot already fills the grid
+  if (!permission && !raw.length) return <View style={common.screen} />;
+  if (permission && !granted) {
     return (
       <View style={[common.screen, common.center, { padding: space.xl }]}>
         <Text style={[common.title, { textAlign: 'center' }]}>{t('library.permissionTitle')}</Text>
@@ -68,13 +71,13 @@ export default function LibraryScreen() {
     <View style={common.screen}>
       <BrowserHeader
         title={albumTitle}
-        subtitle={`${items.length}`}
+        subtitle={t('folders.items', { count: items.length })}
         onTitlePress={() => setAlbumPicker(true)}
         right={
           <IconButton icon={selecting ? 'close' : 'checkmark-circle-outline'} onPress={() => setSelecting(!selecting)} />
         }
       />
-      {permission.accessPrivileges === 'limited' && (
+      {permission?.accessPrivileges === 'limited' && (
         <Pressable onPress={() => presentPermissionsPicker()} style={styles.limited}>
           <Text style={styles.limitedText}>{t('library.limited')}</Text>
         </Pressable>
@@ -88,6 +91,7 @@ export default function LibraryScreen() {
         onLongPress={(it) => toggleSelect(it.key)}
         onEndReached={() => loadLibrary(albumId, sort)}
         header={<FilterBar value={filter} onChange={setFilter} />}
+        loading={loading || !permission}
         empty={<Text style={styles.empty}>{t('library.empty')}</Text>}
       />
       <SelectionBar items={items} />
@@ -133,9 +137,9 @@ function AlbumPicker(p: {
 const styles = StyleSheet.create({
   body: { color: colors.textDim, fontSize: font.md, textAlign: 'center', marginVertical: space.lg, lineHeight: 21 },
   empty: { color: colors.textDim, textAlign: 'center', marginTop: 80 },
-  limited: { marginHorizontal: space.lg, marginBottom: space.sm, padding: space.sm, borderRadius: 8, backgroundColor: colors.surface2 },
-  limitedText: { color: colors.accent, fontSize: font.sm, textAlign: 'center' },
+  limited: { marginHorizontal: space.lg, marginBottom: space.sm, padding: space.md, borderRadius: radius.md, backgroundColor: colors.accentSoft },
+  limitedText: { color: colors.accent, fontSize: font.sm, fontWeight: '600', textAlign: 'center' },
   backdrop: { flex: 1, backgroundColor: colors.overlay },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: space.md },
+  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, paddingTop: space.lg },
   sheetTitle: { color: colors.text, fontSize: font.lg, fontWeight: '700', paddingHorizontal: space.lg, paddingBottom: space.sm },
 });

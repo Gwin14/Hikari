@@ -9,7 +9,7 @@ import { autoTone, autoWhiteBalance, computeHistogram, type Histogram } from '@/
 import { bakeCurveLut } from '@/core/color/curve';
 import { cubeToStrip, parseCube } from '@/core/color/cube';
 import * as db from '@/core/db/db';
-import { evictSource, loadSource } from '@/core/image/load';
+import { evictSource, hasSource, loadSource } from '@/core/image/load';
 import { aiMaskTexture, renderBrushMask } from '@/core/pipeline/masks';
 import {
   blurImage,
@@ -135,6 +135,8 @@ interface EditorState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+/** Grid thumbnails are rendered + JPEG-encoded on the JS thread, so they wait for a pause in editing. */
+let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 let histTimer: ReturnType<typeof setTimeout> | null = null;
 let openToken = 0;
 
@@ -248,6 +250,8 @@ export const useEditor = create<EditorState>((set, get) => {
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(persist, 450);
+    if (thumbTimer) clearTimeout(thumbTimer);
+    thumbTimer = setTimeout(writeThumb, 1800);
     if (histTimer) clearTimeout(histTimer);
     histTimer = setTimeout(updateHistogram, 120);
   }
@@ -265,26 +269,11 @@ export const useEditor = create<EditorState>((set, get) => {
   }
 
   function persist() {
-    const { item, recipe, inputs } = get();
+    const { item, recipe } = get();
     if (!item || !recipe) return;
     const edited = isEdited(recipe);
     const hash = recipeHash(recipe);
     db.saveRecipe(item.key, recipe, edited, hash, item.folderId);
-    // edited thumbnail for the grids
-    if (inputs) {
-      try {
-        const thumb = edited ? get().renderPreview(640) : null;
-        if (thumb) {
-          const f = new File(thumbDir(), `${hash}.jpg`);
-          if (!f.exists) f.write(thumb.encodeToBytes(ImageFormat.JPEG, 85));
-          db.setThumb(item.key, f.uri);
-        } else {
-          db.setThumb(item.key, null);
-        }
-      } catch {
-        // thumbnails are a cache; never block saving
-      }
-    }
     if (item.kind === 'file' && item.dirUri && getBool('writeSidecars', true)) {
       try {
         writeIntoFolder(item.dirUri, sidecarName(item.filename), 'application/rdf+xml', writeSidecar(recipe));
@@ -292,7 +281,40 @@ export const useEditor = create<EditorState>((set, get) => {
         // read-only folders still keep the recipe in the catalog
       }
     }
+    saveTimer = null;
     import('./library').then((m) => m.useLibrary.getState().refreshMeta([item.key]));
+  }
+
+  /** Edited thumbnail for the grids. */
+  function writeThumb() {
+    thumbTimer = null;
+    const { item, recipe, inputs } = get();
+    if (!item || !recipe || !inputs) return;
+    try {
+      const edited = isEdited(recipe);
+      const thumb = edited ? get().renderPreview(640) : null;
+      if (thumb) {
+        const f = new File(thumbDir(), `${recipeHash(recipe)}.jpg`);
+        if (!f.exists) f.write(thumb.encodeToBytes(ImageFormat.JPEG, 85));
+        db.setThumb(item.key, f.uri);
+      } else {
+        db.setThumb(item.key, null);
+      }
+      import('./library').then((m) => m.useLibrary.getState().refreshMeta([item.key]));
+    } catch {
+      // thumbnails are a cache; never block saving
+    }
+  }
+
+  function flushPending() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      persist();
+    }
+    if (thumbTimer) {
+      clearTimeout(thumbTimer);
+      writeThumb();
+    }
   }
 
   return {
@@ -315,6 +337,8 @@ export const useEditor = create<EditorState>((set, get) => {
     hasPair: false,
 
     async open(item) {
+      // swiping to another photo: save the one being left before its state is replaced
+      flushPending();
       const token = ++openToken;
       liveRecipe.value = null;
       publishInputs(null);
@@ -332,36 +356,7 @@ export const useEditor = create<EditorState>((set, get) => {
         compare: 'off',
       });
       try {
-        let hasPair = !!item.pair;
-        let isRaw = item.isRaw;
-        // iOS RAW+JPEG captures are a single asset with two resources
-        if (item.kind === 'library') {
-          const res = await assetResources(item.id);
-          if (res?.hasRaw && res.hasPhoto) hasPair = true;
-          else if (res?.hasRaw) isRaw = true;
-        }
-        let recipe = db.loadRecipe(item.key);
-        if (!recipe && item.kind === 'library') {
-          const json = await readLibraryAdjustment(item.id);
-          if (json) {
-            const { migrateRecipe } = await import('@/core/recipe/ops');
-            recipe = migrateRecipe(JSON.parse(json));
-          }
-        }
-        if (!recipe && item.kind === 'file' && item.dirUri) {
-          recipe = recipeFromSidecar(item);
-        }
-        if (!recipe) {
-          recipe = createRecipe({
-            kind: item.kind,
-            id: item.id,
-            uri: item.uri,
-            filename: item.filename,
-            pairedUri: item.pair?.uri ?? (hasPair ? item.id : null),
-            useRaw: isRaw || (hasPair && getBool('rawDefault', true)),
-            isRaw,
-          });
-        }
+        const { recipe, hasPair } = await resolveRecipe(item);
         const prepared = await loadSource(recipe.source, getPreviewDim(), rawOptions(recipe));
         if (token !== openToken) return;
         const inputs = prepareInputs(prepared, recipe.detail.sharpenRadius, {
@@ -375,15 +370,13 @@ export const useEditor = create<EditorState>((set, get) => {
         await syncResources({ ...recipe, masks: [] }, recipe);
         updateHistogram();
       } catch (e) {
+        recipeCache.delete(item.key);
         if (token === openToken) set({ loading: false, error: e instanceof Error ? e.message : String(e) });
       }
     },
 
     close() {
-      if (saveTimer) {
-        clearTimeout(saveTimer);
-        persist();
-      }
+      flushPending();
       openToken++;
       liveRecipe.value = null;
       publishInputs(null);
@@ -531,6 +524,72 @@ export const useEditor = create<EditorState>((set, get) => {
     },
   };
 });
+
+/** Recipes resolved by `prefetch`, reused by the next `open` of that photo. */
+const recipeCache = new Map<string, { recipe: Recipe; hasPair: boolean }>();
+
+/** The stored (catalog, Photos adjustment or sidecar) recipe for a photo, or a fresh one. */
+async function resolveRecipe(item: PhotoItem): Promise<{ recipe: Recipe; hasPair: boolean }> {
+  const cached = recipeCache.get(item.key);
+  if (cached) {
+    // the catalog wins if the photo was edited since it was prefetched
+    const stored = db.loadRecipe(item.key);
+    recipeCache.delete(item.key);
+    return stored ? { recipe: stored, hasPair: cached.hasPair } : cached;
+  }
+  let hasPair = !!item.pair;
+  let isRaw = item.isRaw;
+  // iOS RAW+JPEG captures are a single asset with two resources
+  if (item.kind === 'library') {
+    const res = await assetResources(item.id);
+    if (res?.hasRaw && res.hasPhoto) hasPair = true;
+    else if (res?.hasRaw) isRaw = true;
+  }
+  let recipe = db.loadRecipe(item.key);
+  if (!recipe && item.kind === 'library') {
+    const json = await readLibraryAdjustment(item.id);
+    if (json) {
+      const { migrateRecipe } = await import('@/core/recipe/ops');
+      recipe = migrateRecipe(JSON.parse(json));
+    }
+  }
+  if (!recipe && item.kind === 'file' && item.dirUri) {
+    recipe = recipeFromSidecar(item);
+  }
+  if (!recipe) {
+    recipe = createRecipe({
+      kind: item.kind,
+      id: item.id,
+      uri: item.uri,
+      filename: item.filename,
+      pairedUri: item.pair?.uri ?? (hasPair ? item.id : null),
+      useRaw: isRaw || (hasPair && getBool('rawDefault', true)),
+      isRaw,
+    });
+  }
+  return { recipe, hasPair };
+}
+
+/**
+ * Decode a photo's preview ahead of time (the neighbours of the open photo) so swiping to it
+ * shows the image immediately. Runs one at a time and never evicts the open photo.
+ */
+let prefetchChain: Promise<void> = Promise.resolve();
+export function prefetchPhoto(item: PhotoItem) {
+  prefetchChain = prefetchChain.then(async () => {
+    try {
+      if (useEditor.getState().item?.key === item.key) return;
+      const resolved = await resolveRecipe(item);
+      const { recipe } = resolved;
+      recipeCache.set(item.key, resolved);
+      if (recipeCache.size > 4) recipeCache.delete(recipeCache.keys().next().value!);
+      if (hasSource(recipe.source, getPreviewDim(), rawOptions(recipe))) return;
+      await loadSource(recipe.source, getPreviewDim(), rawOptions(recipe));
+    } catch {
+      recipeCache.delete(item.key);
+    }
+  });
+}
 
 function recipeFromSidecar(item: PhotoItem): Recipe | null {
   try {
