@@ -8,6 +8,7 @@ import { colors, radius, space } from '../theme';
 
 export const TOOLS: { id: ToolId; icon: IconName; label: string }[] = [
   { id: 'presets', icon: 'albums-outline', label: 'tools.presets' },
+  { id: 'versions', icon: 'git-branch-outline', label: 'tools.versions' },
   { id: 'auto', icon: 'sparkles-outline', label: 'tools.auto' },
   { id: 'light', icon: 'sunny-outline', label: 'tools.light' },
   { id: 'color', icon: 'thermometer-outline', label: 'tools.color' },

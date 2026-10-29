@@ -1,5 +1,5 @@
 import { readMetadata, isNativeAvailable, revertLibraryEdit, type PhotoMetadata } from 'hikari-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,11 +13,11 @@ import { Button, ListRow, SectionTitle } from '../kit';
 import { colors, font, radius, space } from '../theme';
 import { SectionPicker } from './panels/PresetsPanel';
 
-type Sheet = 'menu' | 'copy' | 'snapshots' | 'info' | null;
+type Sheet = 'menu' | 'copy' | 'info' | null;
 
 const COPY_DEFAULT: RecipeSection[] = ['profile', 'light', 'color', 'curves', 'hsl', 'grading', 'detail', 'lens', 'effects', 'lut'];
 
-/** "More" menu: copy/paste, snapshots, rating, info, reset/revert. */
+/** "More" menu: copy/paste, versions, rating, info, reset/revert. */
 export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet): void }) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -26,13 +26,8 @@ export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet)
   const clipboard = useEditor((s) => s.clipboard);
   const meta = useLibrary((s) => (item ? s.meta.get(item.key) : undefined));
   const [sections, setSections] = useState<RecipeSection[]>(COPY_DEFAULT);
-  const [snapVersion, setSnapVersion] = useState(0);
-  const snapshots = useMemo(
-    () => (sheet === 'snapshots' && item ? db.listSnapshots(item.key) : []),
-    [sheet, item, snapVersion], // eslint-disable-line react-hooks/exhaustive-deps
-  );
   const [info, setInfo] = useState<PhotoMetadata | null>(null);
-  const { copy, paste, resetAll, commit } = useEditor.getState();
+  const { copy, paste, resetAll, setTool } = useEditor.getState();
   const { setMeta } = useLibrary.getState();
 
   useEffect(() => {
@@ -108,7 +103,14 @@ export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet)
                   : undefined
               }
             />
-            <ListRow icon="camera-outline" label={t('editor.snapshots')} onPress={() => onSheet('snapshots')} />
+            <ListRow
+              icon="git-branch-outline"
+              label={t('tools.versions')}
+              onPress={() => {
+                setTool('versions');
+                close();
+              }}
+            />
             <ListRow icon="information-circle-outline" label={t('editor.info')} onPress={() => onSheet('info')} />
             <ListRow
               icon="refresh-outline"
@@ -134,30 +136,6 @@ export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet)
               }}
             />
           </View>
-        )}
-        {sheet === 'snapshots' && (
-          <ScrollView style={{ maxHeight: 460 }}>
-            <ListRow
-              icon="add-circle-outline"
-              label={t('editor.snapshot')}
-              onPress={() => {
-                const name = new Date().toLocaleString();
-                db.addSnapshot(item.key, name, recipe);
-                setSnapVersion((v) => v + 1);
-              }}
-            />
-            {snapshots.map((s) => (
-              <ListRow
-                key={s.id}
-                icon="time-outline"
-                label={s.name}
-                onPress={() => {
-                  commit({ ...s.recipe, source: recipe.source });
-                  close();
-                }}
-              />
-            ))}
-          </ScrollView>
         )}
         {sheet === 'info' && (
           <ScrollView style={{ maxHeight: 480 }}>

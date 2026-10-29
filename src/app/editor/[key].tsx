@@ -29,6 +29,7 @@ import {
 import { GeometryPanel } from '@/ui/editor/panels/GeometryPanel';
 import { MasksPanel, useBrush } from '@/ui/editor/panels/MasksPanel';
 import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
+import { VersionsPanel } from '@/ui/editor/panels/VersionsPanel';
 import { ToolBar } from '@/ui/editor/ToolBar';
 import { Button, IconButton } from '@/ui/kit';
 import { colors, common, font, radius, space } from '@/ui/theme';
@@ -55,7 +56,7 @@ export default function EditorScreen() {
   const thumb = useLibrary((s) => (item ? (s.meta.get(item.key)?.thumb ?? null) : null));
   const previewUri = item ? (thumb ?? item.thumbUri ?? cachedThumb(item)) : null;
   const { open, close, undo, redo, setTool, setCompare, auto } = useEditor.getState();
-  const [sheet, setSheet] = useState<'menu' | 'copy' | 'snapshots' | 'info' | null>(null);
+  const [sheet, setSheet] = useState<'menu' | 'copy' | 'info' | null>(null);
   const [showHist, setShowHist] = useState(true);
   const brush = useBrush();
 
@@ -94,6 +95,8 @@ export default function EditorScreen() {
     switch (tool) {
       case 'presets':
         return <PresetsPanel recipe={recipe} />;
+      case 'versions':
+        return <VersionsPanel recipe={recipe} />;
       case 'light':
         return <LightPanel recipe={recipe} />;
       case 'color':

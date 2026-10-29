@@ -53,6 +53,8 @@ const MIGRATIONS = [
      size INTEGER NOT NULL,
      path TEXT NOT NULL
    );`,
+  `ALTER TABLE snapshots ADD COLUMN thumb TEXT;
+   CREATE INDEX IF NOT EXISTS snapshots_photo ON snapshots(photo_key, created_at);`,
 ];
 
 export function getDb(): SQLite.SQLiteDatabase {
@@ -179,38 +181,65 @@ export function clearEdit(key: string) {
   getDb().runSync('UPDATE photos SET recipe = NULL, edited = 0, recipe_hash = NULL, thumb = NULL WHERE key = ?', [key]);
 }
 
-// ---------------------------------------------------------------------------- snapshots
+// ---------------------------------------------------------------------------- versions
 
-export interface Snapshot {
+/** A named, saved state of a photo's edit (Lightroom "versions"); stored in the `snapshots` table. */
+export interface PhotoVersion {
   id: string;
   name: string;
   recipe: Recipe;
+  thumb: string | null;
   createdAt: number;
 }
 
-export function listSnapshots(photoKey: string): Snapshot[] {
+export function listVersions(photoKey: string): PhotoVersion[] {
   return getDb()
-    .getAllSync<{ id: string; name: string; recipe: string; created_at: number }>(
+    .getAllSync<{ id: string; name: string; recipe: string; thumb: string | null; created_at: number }>(
       'SELECT * FROM snapshots WHERE photo_key = ? ORDER BY created_at DESC',
       [photoKey],
     )
     .flatMap((r) => {
-      const recipe = migrateRecipe(JSON.parse(r.recipe));
-      return recipe ? [{ id: r.id, name: r.name, recipe, createdAt: r.created_at }] : [];
+      let recipe: Recipe | null = null;
+      try {
+        recipe = migrateRecipe(JSON.parse(r.recipe));
+      } catch {
+        // skip unreadable rows
+      }
+      return recipe ? [{ id: r.id, name: r.name, recipe, thumb: r.thumb, createdAt: r.created_at }] : [];
     });
 }
 
-export function addSnapshot(photoKey: string, name: string, recipe: Recipe) {
-  getDb().runSync('INSERT INTO snapshots (id, photo_key, name, recipe, created_at) VALUES (?, ?, ?, ?, ?)', [
-    newId(),
+export function addVersion(photoKey: string, v: PhotoVersion) {
+  getDb().runSync('INSERT INTO snapshots (id, photo_key, name, recipe, thumb, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
+    v.id,
     photoKey,
-    name,
-    JSON.stringify(recipe),
-    Date.now(),
+    v.name,
+    JSON.stringify(v.recipe),
+    v.thumb,
+    v.createdAt,
   ]);
 }
 
-export function deleteSnapshot(id: string) {
+export function updateVersion(id: string, patch: Partial<Pick<PhotoVersion, 'name' | 'recipe' | 'thumb'>>) {
+  const sets: string[] = [];
+  const vals: (string | null)[] = [];
+  if (patch.name !== undefined) {
+    sets.push('name = ?');
+    vals.push(patch.name);
+  }
+  if (patch.recipe !== undefined) {
+    sets.push('recipe = ?');
+    vals.push(JSON.stringify(patch.recipe));
+  }
+  if (patch.thumb !== undefined) {
+    sets.push('thumb = ?');
+    vals.push(patch.thumb);
+  }
+  if (!sets.length) return;
+  getDb().runSync(`UPDATE snapshots SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+}
+
+export function deleteVersion(id: string) {
   getDb().runSync('DELETE FROM snapshots WHERE id = ?', [id]);
 }
 

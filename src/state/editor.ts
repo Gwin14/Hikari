@@ -26,6 +26,7 @@ import {
 import { createMask, createRecipe } from '@/core/recipe/defaults';
 import { applySettings, isEdited, pickSections, recipeHash } from '@/core/recipe/ops';
 import type { Mask, MaskType, Recipe, RecipeSection, RecipeSettings } from '@/core/recipe/schema';
+import { recipeFromVersion } from '@/core/recipe/versions';
 import { writeIntoFolder } from '@/core/sources/folders';
 import type { PhotoItem } from '@/core/sources/types';
 import { readSidecar, sidecarName, writeSidecar } from '@/core/xmp/sidecar';
@@ -81,7 +82,8 @@ export type ToolId =
   | 'effects'
   | 'lut'
   | 'masks'
-  | 'raw';
+  | 'raw'
+  | 'versions';
 
 interface Clipboard {
   settings: Partial<RecipeSettings>;
@@ -108,6 +110,8 @@ interface EditorState {
   compare: 'off' | 'hold' | 'split';
   clipboard: Clipboard | null;
   hasPair: boolean;
+  /** Saved versions of the open photo, newest first. */
+  versions: db.PhotoVersion[];
 
   open(item: PhotoItem): Promise<void>;
   close(): void;
@@ -134,6 +138,14 @@ interface EditorState {
   setMaskOverlay(v: boolean): void;
   importLut(uri: string, name: string): Promise<void>;
   renderPreview(maxDim: number): SkImage | null;
+  /** Save the current settings as a new named version. */
+  createVersion(name: string): void;
+  /** Load a version's settings as one (undoable) history step. */
+  applyVersion(id: string): void;
+  /** Overwrite a version with the current settings. */
+  updateVersion(id: string): void;
+  renameVersion(id: string, name: string): void;
+  deleteVersion(id: string): void;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -183,6 +195,23 @@ const thumbDir = () => {
   if (!d.exists) d.create({ intermediates: true, idempotent: true });
   return d;
 };
+
+/** Version thumbnails are kept with the documents: unlike grid thumbs they can't be re-rendered without opening each version. */
+const versionDir = () => {
+  const d = new Directory(Paths.document, 'versions');
+  if (!d.exists) d.create({ intermediates: true, idempotent: true });
+  return d;
+};
+
+function deleteFileUri(uri: string | null) {
+  if (!uri) return;
+  try {
+    const f = new File(uri);
+    if (f.exists) f.delete();
+  } catch {
+    // a missing thumbnail only shows a placeholder
+  }
+}
 
 export const useEditor = create<EditorState>((set, get) => {
   /** Rebuild GPU resources affected by a recipe change. */
@@ -332,6 +361,21 @@ export const useEditor = create<EditorState>((set, get) => {
     }
   }
 
+  /** Small thumbnail of what's on screen for the versions list (the name carries the hash so updates bust image caches). */
+  function writeVersionThumb(id: string): string | null {
+    const { recipe } = get();
+    if (!recipe) return null;
+    try {
+      const img = get().renderPreview(320);
+      if (!img) return null;
+      const f = new File(versionDir(), `${id}-${recipeHash(recipe)}.jpg`);
+      if (!f.exists) f.write(img.encodeToBytes(ImageFormat.JPEG, 80));
+      return f.uri;
+    } catch {
+      return null;
+    }
+  }
+
   function flushPending() {
     if (saveTimer) {
       clearTimeout(saveTimer);
@@ -362,6 +406,7 @@ export const useEditor = create<EditorState>((set, get) => {
     compare: 'off',
     clipboard: null,
     hasPair: false,
+    versions: [],
 
     async open(item) {
       // swiping to another photo: save the one being left before its state is replaced
@@ -382,6 +427,7 @@ export const useEditor = create<EditorState>((set, get) => {
         activeMaskId: null,
         maskFailed: [],
         compare: 'off',
+        versions: db.listVersions(item.key),
       });
       try {
         const { recipe, hasPair } = await resolveRecipe(item);
@@ -408,7 +454,7 @@ export const useEditor = create<EditorState>((set, get) => {
       openToken++;
       liveRecipe.value = null;
       publishInputs(null);
-      set({ item: null, recipe: null, inputs: null, prepared: null, past: [], future: [], histogram: null });
+      set({ item: null, recipe: null, inputs: null, prepared: null, past: [], future: [], histogram: null, versions: [] });
     },
 
     commit(next) {
@@ -549,6 +595,48 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!inputs || !recipe) return null;
       const long = Math.max(inputs.frame.width, inputs.frame.height);
       return renderToImage(inputs, recipe, Math.min(1, maxDim / long));
+    },
+
+    createVersion(name) {
+      const { item, recipe, versions } = get();
+      if (!item || !recipe) return;
+      const id = db.newId();
+      const v: db.PhotoVersion = { id, name, recipe, thumb: writeVersionThumb(id), createdAt: Date.now() };
+      db.addVersion(item.key, v);
+      set({ versions: [v, ...versions] });
+    },
+
+    applyVersion(id) {
+      const { recipe, versions, activeMaskId } = get();
+      const v = versions.find((x) => x.id === id);
+      if (!recipe || !v) return;
+      const next = recipeFromVersion(v.recipe, recipe);
+      if (next.source.useRaw !== recipe.source.useRaw) evictSource(recipe.source);
+      if (activeMaskId && !next.masks.some((m) => m.id === activeMaskId)) set({ activeMaskId: null });
+      get().commit(next);
+    },
+
+    updateVersion(id) {
+      const { recipe, versions } = get();
+      const v = versions.find((x) => x.id === id);
+      if (!recipe || !v) return;
+      const thumb = writeVersionThumb(id);
+      if (thumb !== v.thumb) deleteFileUri(v.thumb);
+      db.updateVersion(id, { recipe, thumb });
+      set({ versions: versions.map((x) => (x.id === id ? { ...x, recipe, thumb } : x)) });
+    },
+
+    renameVersion(id, name) {
+      db.updateVersion(id, { name });
+      set({ versions: get().versions.map((x) => (x.id === id ? { ...x, name } : x)) });
+    },
+
+    deleteVersion(id) {
+      const v = get().versions.find((x) => x.id === id);
+      if (!v) return;
+      db.deleteVersion(id);
+      deleteFileUri(v.thumb);
+      set({ versions: get().versions.filter((x) => x.id !== id) });
     },
   };
 });
