@@ -3,20 +3,98 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "@shopify/flash-list": "2.3.2",
+    "@shopify/react-native-skia": "2.14.0",
+    "babel-preset-expo": "~58.0.0",
     "expo": "~58.0.21",
+    "expo-blur": "~58.0.5",
+    "expo-build-properties": "~58.0.11",
+    "expo-constants": "~58.0.14",
+    "expo-crypto": "~58.0.7",
+    "expo-dev-client": "~58.0.17",
+    "expo-document-picker": "~58.0.4",
+    "expo-file-system": "~58.0.13",
+    "expo-font": "~58.0.11",
+    "expo-haptics": "~58.0.7",
+    "expo-image": "~58.0.18",
+    "expo-linking": "~58.0.15",
+    "expo-localization": "~58.0.5",
+    "expo-media-library": "~58.0.13",
+    "expo-router": "~58.0.28",
+    "expo-sharing": "~58.0.21",
+    "expo-sqlite": "~58.0.14",
     "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
+    "i18next": "^26.5.11",
+    "immer": "^11.2.9",
     "react": "19.3.0",
-    "react-native": "0.88.1"
+    "react-i18next": "^17.1.9",
+    "react-native": "0.88.1",
+    "react-native-gesture-handler": "~3.3.0",
+    "react-native-mmkv": "^4.3.2",
+    "react-native-nitro-modules": "^0.37.1",
+    "react-native-reanimated": "4.7.1",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.0",
+    "react-native-worklets": "0.13.0",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@react-native/jest-preset": "^0.88.1",
+    "@types/jest": "30.0.0",
     "@types/react": "~19.3.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~58.0.4",
+    "jest": "~30.5.2",
+    "jest-expo": "~58.0.13",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "projects": [
+      {
+        "displayName": "unit",
+        "preset": "jest-expo",
+        "testMatch": [
+          "<rootDir>/src/**/__tests__/**/*.test.ts"
+        ],
+        "testPathIgnorePatterns": [
+          "\\.gpu\\.test\\.ts$"
+        ],
+        "moduleNameMapper": {
+          "^@/(.*)$": "<rootDir>/src/$1"
+        }
+      },
+      {
+        "displayName": "gpu",
+        "testEnvironment": "node",
+        "testMatch": [
+          "<rootDir>/src/**/__tests__/**/*.gpu.test.ts"
+        ],
+        "transform": {
+          "\\.[jt]sx?$": [
+            "babel-jest",
+            {
+              "presets": [
+                "babel-preset-expo"
+              ]
+            }
+          ]
+        },
+        "moduleNameMapper": {
+          "^@/(.*)$": "<rootDir>/src/$1"
+        }
+      }
+    ]
+  }
 }

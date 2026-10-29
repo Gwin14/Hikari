@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["HikariNativeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.hikarinative.HikariNativeModule"]
+  }
+}

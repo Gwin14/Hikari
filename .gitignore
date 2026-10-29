@@ -39,3 +39,25 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# native build outputs (local Expo module and Gradle/CMake caches)
+build/
+.cxx/
+.gradle/
+local.properties
+*.hprof
+DerivedData/
+Pods/
+*.xcuserstate
+xcuserdata/
+
+# tests
+coverage/
+
+# editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code local settings (shared settings.json stays tracked)
+.claude/settings.local.json
