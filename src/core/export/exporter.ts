@@ -8,11 +8,12 @@ import { Platform } from 'react-native';
 import * as db from '../db/db';
 import { decodeTarget, loadSource } from '../image/load';
 import { geometryMatrix } from '../pipeline/geometry';
-import { aiMaskTexture, renderBrushMask } from '../pipeline/masks';
+import { maskTexture } from '../pipeline/masks';
 import { drawRecipe, makeRgbaImage, prepareInputs, type RenderInputs, type RenderOptions } from '../pipeline/render';
 import { bakeCurveLut } from '../color/curve';
 import { cubeToStrip, parseCube } from '../color/cube';
 import { createRecipe } from '../recipe/defaults';
+import { buildRetouch } from '../retouch/remove';
 import { isEdited, recipeHash } from '../recipe/ops';
 import type { Recipe, SourceRef } from '../recipe/schema';
 import { openFolder, writeIntoFolder } from '../sources/folders';
@@ -55,20 +56,17 @@ export async function buildInputs(key: string, recipe: Recipe, maxDim: number): 
     lensCorrection: recipe.raw.lensCorrection,
     boost: recipe.raw.boost,
   });
+  // removals are solved again at this resolution so the exported fill has full detail
+  const retouch = recipe.retouch.length ? await buildRetouch(key, recipe.source, prepared.source, recipe.retouch) : [];
   const inputs = prepareInputs(prepared, recipe.detail.sharpenRadius, {
     curve: makeRgbaImage(bakeCurveLut(recipe.curves), 256, 1),
     lut: lutFor(recipe.lut.id),
     maskTextures: {},
+    retouch,
   });
-  const aspect = inputs.frame.width / inputs.frame.height;
   for (const m of recipe.masks) {
-    if (m.type === 'brush') {
-      const img = renderBrushMask(m.strokes, aspect);
-      if (img) inputs.maskTextures[m.id] = img;
-    } else if (m.type === 'subject' || m.type === 'sky' || m.type === 'background' || m.type === 'person') {
-      const img = await aiMaskTexture(key, recipe.source, m, inputs.source);
-      if (img) inputs.maskTextures[m.id] = img;
-    }
+    const img = await maskTexture(key, recipe.source, m, inputs.source);
+    if (img) inputs.maskTextures[m.id] = img;
   }
   return { inputs, fullW: prepared.fullWidth, fullH: prepared.fullHeight };
 }

@@ -1,5 +1,6 @@
 import {
   AlphaType,
+  BlendMode,
   ColorType,
   FilterMode,
   MipmapMode,
@@ -59,6 +60,13 @@ export function getPrograms(): Programs {
   return programs;
 }
 
+/** A removal result: a feathered patch (alpha = blend weight) drawn over the source at x, y. */
+export interface RetouchPatch {
+  image: SkImage;
+  x: number;
+  y: number;
+}
+
 /**
  * GPU-side inputs for rendering one photo at one resolution. The editor keeps one at
  * proxy size; export builds one at full size.
@@ -79,6 +87,8 @@ export interface RenderInputs {
   lut: { image: SkImage; size: number } | null;
   /** Mask id → grayscale texture (brush strokes / AI segmentation), any resolution. */
   maskTextures: Record<string, SkImage>;
+  /** Object removal patches over `source` (the blurs are already built from the cleaned photo). */
+  retouch: RetouchPatch[];
   /** Changes whenever the source or a blur image changes (UI-thread texture cache key). */
   gpuKey: string;
 }
@@ -119,12 +129,23 @@ function imageShader(img: SkImage, fw: number, fh: number): SkShader {
   return img.makeShaderOptions(TileMode.Clamp, TileMode.Clamp, FilterMode.Linear, MipmapMode.None, m);
 }
 
+/** The source with object removals applied. */
+function sourceShader(inp: RenderInputs, w: number, h: number): SkShader {
+  'worklet';
+  let sh = imageShader(inp.source, w, h);
+  for (const p of inp.retouch) {
+    const patch = p.image.makeShaderOptions(TileMode.Decal, TileMode.Decal, FilterMode.Linear, MipmapMode.None, Skia.Matrix().translate(p.x, p.y));
+    sh = Skia.Shader.MakeBlend(BlendMode.SrcOver, sh, patch);
+  }
+  return sh;
+}
+
 /** Builds the full shader chain in image pixel space. */
 export function buildShader(inp: RenderInputs, r: Recipe, opts: RenderOptions = {}): SkShader {
   'worklet';
   const { width: w, height: h } = inp.frame;
-  const src = imageShader(inp.source, w, h);
-  if (opts.original) return src;
+  if (opts.original) return imageShader(inp.source, w, h);
+  const src = sourceShader(inp, w, h);
   const P = inp.programs;
   const blurN = imageShader(inp.blurN, w, h);
   const blurS = imageShader(inp.blurS, w, h);
@@ -210,6 +231,13 @@ export function makeRgbaImage(pixels: Uint8Array, width: number, height: number)
   return img;
 }
 
+/** Recomputes the sharpen blur (sharpen radius changed). */
+export function rebuildBlurS(inp: RenderInputs, fullLong: number, sharpenRadius: number): RenderInputs {
+  const src = cleanedSource(inp.source, inp.retouch);
+  const sg = blurSigmas(src.width(), src.height(), fullLong, sharpenRadius);
+  return { ...inp, blurS: blurImage(src, sg.s), gpuKey: nextGpuKey() };
+}
+
 export const blurSigmas = (w: number, h: number, fullLong: number, sharpenRadius: number) => {
   const long = Math.max(w, h);
   const s = long / fullLong; // preview → full-resolution pixel ratio
@@ -228,21 +256,34 @@ export interface PreparedSource {
   isRaw: boolean;
 }
 
+/** Source with removal patches baked in (8 bit; only used to build the blurs). */
+function cleanedSource(src: SkImage, retouch: RetouchPatch[]): SkImage {
+  if (!retouch.length) return src;
+  const surface = Skia.Surface.MakeOffscreen(src.width(), src.height()) ?? Skia.Surface.Make(src.width(), src.height());
+  if (!surface) throw new Error('Unable to allocate surface');
+  const canvas = surface.getCanvas();
+  canvas.drawImage(src, 0, 0);
+  for (const p of retouch) canvas.drawImage(p.image, p.x, p.y);
+  surface.flush();
+  const snap = surface.makeImageSnapshot();
+  return snap.makeNonTextureImage() ?? snap;
+}
+
 export function prepareInputs(
   prepared: PreparedSource,
   sharpenRadius: number,
-  extras: Pick<RenderInputs, 'curve' | 'lut' | 'maskTextures'>,
+  extras: Pick<RenderInputs, 'curve' | 'lut' | 'maskTextures' | 'retouch'>,
 ): RenderInputs {
-  const src = prepared.source;
-  const w = src.width();
-  const h = src.height();
+  const w = prepared.source.width();
+  const h = prepared.source.height();
+  const src = cleanedSource(prepared.source, extras.retouch);
   const sg = blurSigmas(w, h, Math.max(prepared.fullWidth, prepared.fullHeight), sharpenRadius);
   // Large blurs are computed at reduced resolution: visually identical and much cheaper.
   const half = (d: number) => Math.max(1, Math.round(d / 4));
   return {
     programs: getPrograms(),
     frame: { width: w, height: h, isRaw: prepared.isRaw },
-    source: src,
+    source: prepared.source,
     blurN: blurImage(src, sg.n),
     blurS: blurImage(src, sg.s),
     blurM: blurImage(src, sg.m / 2, Math.round(w / 2), Math.round(h / 2)),

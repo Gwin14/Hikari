@@ -99,6 +99,11 @@ class HikariNativeModule : Module() {
       Segmenter.segment(context, u, displayName(u), kind, maxDim, preferRaw)
     }
 
+    AsyncFunction("segmentInstances") Coroutine { uri: String, maxDim: Int, preferRaw: Boolean ->
+      val u = resolve(uri)
+      Segmenter.instances(context, u, displayName(u), maxDim, preferRaw)
+    }
+
     // Android's MediaStore stores RAW and JPEG as separate items; pairing happens in JS.
     AsyncFunction("assetResources") { _: String -> null as Map<String, Any>? }
 

@@ -10,13 +10,11 @@ import { bakeCurveLut } from '@/core/color/curve';
 import { cubeToStrip, parseCube } from '@/core/color/cube';
 import * as db from '@/core/db/db';
 import { evictSource, hasSource, loadSource } from '@/core/image/load';
-import { aiMaskTexture, renderBrushMask } from '@/core/pipeline/masks';
+import { composeMask, isAiMask, maskBase, maskBaseKey, peekMaskBase, renderBrushMask } from '@/core/pipeline/masks';
 import {
-  blurImage,
-  blurSigmas,
   makeRgbaImage,
-  nextGpuKey,
   prepareInputs,
+  rebuildBlurS,
   toTexture,
   renderToImage,
   resizeImage,
@@ -25,8 +23,9 @@ import {
 } from '@/core/pipeline/render';
 import { createMask, createRecipe } from '@/core/recipe/defaults';
 import { applySettings, isEdited, pickSections, recipeHash } from '@/core/recipe/ops';
-import type { Mask, MaskType, Recipe, RecipeSection, RecipeSettings } from '@/core/recipe/schema';
+import type { BrushStroke, Mask, MaskType, Recipe, RecipeSection, RecipeSettings, RetouchSpot } from '@/core/recipe/schema';
 import { recipeFromVersion } from '@/core/recipe/versions';
+import { buildRetouch } from '@/core/retouch/remove';
 import { writeIntoFolder } from '@/core/sources/folders';
 import type { PhotoItem } from '@/core/sources/types';
 import { readSidecar, sidecarName, writeSidecar } from '@/core/xmp/sidecar';
@@ -82,6 +81,7 @@ export type ToolId =
   | 'effects'
   | 'lut'
   | 'masks'
+  | 'retouch'
   | 'raw'
   | 'versions';
 
@@ -106,6 +106,12 @@ interface EditorState {
   maskBusy: string | null;
   /** AI masks whose detection found nothing (or failed); not retried until the photo reopens. */
   maskFailed: string[];
+  /** Painting add / subtract refinements on an AI mask (instead of panning the photo). */
+  maskBrushing: boolean;
+  /** Object removals being computed. */
+  retouchBusy: boolean;
+  /** New removals grow to the whole detected object under the strokes. */
+  removeObjects: boolean;
   showClipping: boolean;
   compare: 'off' | 'hold' | 'split';
   clipboard: Clipboard | null;
@@ -136,6 +142,12 @@ interface EditorState {
   removeMask(id: string): void;
   setActiveMask(id: string | null): void;
   setMaskOverlay(v: boolean): void;
+  setMaskBrushing(v: boolean): void;
+  /** Adds one removal from a brush stroke. */
+  addRetouch(stroke: BrushStroke): void;
+  removeRetouch(id: string): void;
+  clearRetouch(): void;
+  setRemoveObjects(v: boolean): void;
   importLut(uri: string, name: string): Promise<void>;
   renderPreview(maxDim: number): SkImage | null;
   /** Save the current settings as a new named version. */
@@ -152,10 +164,12 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** Grid thumbnails are rendered + JPEG-encoded on the JS thread, so they wait for a pause in editing. */
 let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 let histTimer: ReturnType<typeof setTimeout> | null = null;
-/** AI mask detections in flight, by mask id + source variant. */
-const pendingAi = new Set<string>();
-const AI_MASKS: MaskType[] = ['subject', 'sky', 'background', 'person'];
+/** AI mask detections in flight: detection key → mask id. */
+const pendingAi = new Map<string, string>();
 let openToken = 0;
+/** Latest removal computation; older ones are dropped when they land. */
+let retouchSeq = 0;
+let spotSeq = 0;
 
 const rawOptions = (r: Recipe) => ({
   decodeNoise: r.raw.decodeNoise,
@@ -231,26 +245,25 @@ export const useEditor = create<EditorState>((set, get) => {
         curve: inputs.curve,
         lut: inputs.lut,
         maskTextures: {},
+        retouch: [],
       });
       set({ prepared });
       changed = true;
-      prev = { ...prev, masks: [] }; // force mask textures to rebuild
+      prev = { ...prev, masks: [], retouch: [] }; // force mask textures and removals to rebuild
     }
     if (!prev || !sameJson(prev.curves, next.curves)) {
       inputs = { ...inputs, curve: makeRgbaImage(bakeCurveLut(next.curves), 256, 1) };
       changed = true;
     }
     if (prev && prev.detail.sharpenRadius !== next.detail.sharpenRadius) {
-      const src = inputs.source;
-      const sg = blurSigmas(src.width(), src.height(), Math.max(s.prepared.fullWidth, s.prepared.fullHeight), next.detail.sharpenRadius);
-      inputs = { ...inputs, blurS: blurImage(src, sg.s), gpuKey: nextGpuKey() };
+      inputs = rebuildBlurS(inputs, Math.max(s.prepared.fullWidth, s.prepared.fullHeight), next.detail.sharpenRadius);
       changed = true;
     }
     if (!prev || prev.lut.id !== next.lut.id) {
       inputs = { ...inputs, lut: loadLutImage(next.lut.id) };
       changed = true;
     }
-    // masks: brush textures follow strokes; AI masks are generated once per type
+    // masks: brush textures follow strokes; AI detections are computed once and refined with strokes
     const textures = { ...inputs.maskTextures };
     const aspect = inputs.frame.width / inputs.frame.height;
     for (const m of next.masks) {
@@ -261,9 +274,21 @@ export const useEditor = create<EditorState>((set, get) => {
           if (img) textures[m.id] = img;
           changed = true;
         }
-      } else if (AI_MASKS.includes(m.type) && !textures[m.id] && !get().maskFailed.includes(m.id)) {
-        // runs in the background so edits made meanwhile aren't overwritten when it lands
-        generateAiMask(item.key, next, m, inputs.source);
+      } else if (isAiMask(m)) {
+        if (m.type === 'object' && !m.strokes.some((x) => !x.erase)) {
+          delete textures[m.id];
+          continue;
+        }
+        const base = peekMaskBase(maskBaseKey(item.key, next.source, m));
+        if (base) {
+          if (!old || !textures[m.id] || !sameJson(old.strokes, m.strokes)) {
+            textures[m.id] = composeMask(m, base);
+            changed = true;
+          }
+        } else if (m.type === 'object' || !get().maskFailed.includes(m.id)) {
+          // runs in the background so edits made meanwhile aren't overwritten when it lands
+          generateAiMask(item.key, next, m, inputs.source);
+        }
       }
     }
     for (const id of Object.keys(textures)) if (!next.masks.some((m) => m.id === id)) delete textures[id];
@@ -273,31 +298,65 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ inputs });
       publishInputs(inputs);
     }
+    if (!prev || !sameJson(prev.retouch, next.retouch)) applyRetouch(item.key, next);
+  }
+
+  /** Solves the removals in the background, then rebuilds the source-derived inputs around them. */
+  async function applyRetouch(itemKey: string, recipe: Recipe) {
+    const seq = ++retouchSeq;
+    const s = get();
+    if (!s.inputs || !s.prepared) return;
+    const prepared = s.prepared;
+    set({ retouchBusy: recipe.retouch.length > 0 });
+    let patches: RenderInputs['retouch'] = [];
+    try {
+      if (recipe.retouch.length) patches = await buildRetouch(itemKey, recipe.source, prepared.source, recipe.retouch);
+    } catch (e) {
+      console.warn('Removal failed', e);
+    }
+    const now = get();
+    if (seq !== retouchSeq) return;
+    set({ retouchBusy: false });
+    if (now.item?.key !== itemKey || !now.inputs || now.prepared !== prepared || !now.recipe) return;
+    if (!patches.length && !now.inputs.retouch.length) return;
+    const inputs = {
+      ...prepareInputs(prepared, now.recipe.detail.sharpenRadius, {
+        curve: now.inputs.curve,
+        lut: now.inputs.lut,
+        maskTextures: now.inputs.maskTextures,
+        retouch: patches,
+      }),
+    };
+    set({ inputs });
+    publishInputs(inputs);
+    scheduleSave();
   }
 
   /** Detects an AI mask once (however many edits arrive meanwhile) and merges it into the current inputs. */
   async function generateAiMask(itemKey: string, recipe: Recipe, m: Mask, proxy: SkImage) {
-    const job = `${m.id}:${recipe.source.useRaw ? 'r' : 'p'}`;
-    if (pendingAi.has(job)) return;
-    pendingAi.add(job);
+    const key = maskBaseKey(itemKey, recipe.source, m);
+    if (pendingAi.has(key)) return;
+    pendingAi.set(key, m.id);
     set({ maskBusy: m.id });
     let img: SkImage | null = null;
     try {
-      img = await aiMaskTexture(itemKey, recipe.source, m, proxy);
+      img = await maskBase(itemKey, recipe.source, m, proxy);
     } catch (e) {
       console.warn('AI mask failed', e);
     } finally {
-      pendingAi.delete(job);
-      if (get().maskBusy === m.id) set({ maskBusy: null });
+      pendingAi.delete(key);
+      if (get().maskBusy === m.id && ![...pendingAi.values()].includes(m.id)) set({ maskBusy: null });
     }
     const s = get();
     if (s.item?.key !== itemKey || !s.inputs || !s.recipe) return;
-    if (s.recipe.source.useRaw !== recipe.source.useRaw || !s.recipe.masks.some((x) => x.id === m.id)) return;
+    // only the detection the mask currently asks for lands (object selections change with strokes)
+    const cur = s.recipe.masks.find((x) => x.id === m.id);
+    if (!cur || maskBaseKey(itemKey, s.recipe.source, cur) !== key) return;
     if (!img) {
-      set({ maskFailed: [...s.maskFailed, m.id] });
+      if (cur.type !== 'object') set({ maskFailed: [...s.maskFailed, m.id] });
       return;
     }
-    const inputs = { ...s.inputs, maskTextures: { ...s.inputs.maskTextures, [m.id]: img } };
+    const inputs = { ...s.inputs, maskTextures: { ...s.inputs.maskTextures, [m.id]: composeMask(cur, img) } };
     set({ inputs });
     publishInputs(inputs);
   }
@@ -402,6 +461,9 @@ export const useEditor = create<EditorState>((set, get) => {
     maskOverlay: true,
     maskBusy: null,
     maskFailed: [],
+    maskBrushing: false,
+    retouchBusy: false,
+    removeObjects: true,
     showClipping: false,
     compare: 'off',
     clipboard: null,
@@ -426,6 +488,8 @@ export const useEditor = create<EditorState>((set, get) => {
         histogram: null,
         activeMaskId: null,
         maskFailed: [],
+        maskBrushing: false,
+        retouchBusy: false,
         compare: 'off',
         versions: db.listVersions(item.key),
       });
@@ -437,11 +501,12 @@ export const useEditor = create<EditorState>((set, get) => {
           curve: makeRgbaImage(bakeCurveLut(recipe.curves), 256, 1),
           lut: loadLutImage(recipe.lut.id),
           maskTextures: {},
+          retouch: [],
         });
         set({ recipe, inputs, prepared, loading: false, hasPair });
         publishInputs(inputs);
         liveRecipe.value = recipe;
-        await syncResources({ ...recipe, masks: [] }, recipe);
+        await syncResources({ ...recipe, masks: [], retouch: [] }, recipe);
         updateHistogram();
       } catch (e) {
         recipeCache.delete(item.key);
@@ -495,7 +560,7 @@ export const useEditor = create<EditorState>((set, get) => {
       scheduleSave();
     },
 
-    setTool: (tool) => set({ tool, activeMaskId: tool === 'masks' ? get().activeMaskId : null }),
+    setTool: (tool) => set({ tool, activeMaskId: tool === 'masks' ? get().activeMaskId : null, maskBrushing: false }),
     setCompare: (compare) => set({ compare }),
     toggleClipping: () => set({ showClipping: !get().showClipping }),
 
@@ -575,8 +640,27 @@ export const useEditor = create<EditorState>((set, get) => {
       if (get().activeMaskId === id) set({ activeMaskId: null });
     },
 
-    setActiveMask: (activeMaskId) => set({ activeMaskId }),
+    setActiveMask: (activeMaskId) => set({ activeMaskId, maskBrushing: false }),
     setMaskOverlay: (maskOverlay) => set({ maskOverlay }),
+    setMaskBrushing: (maskBrushing) => set({ maskBrushing }),
+
+    addRetouch(stroke) {
+      const r = get().recipe;
+      if (!r) return;
+      spotSeq += 1;
+      const spot: RetouchSpot = { id: `r${Date.now().toString(36)}${spotSeq}`, strokes: [stroke], objectAware: get().removeObjects };
+      get().commit({ ...r, retouch: [...r.retouch, spot] });
+    },
+
+    removeRetouch(id) {
+      get().update((r) => ({ ...r, retouch: r.retouch.filter((x) => x.id !== id) }));
+    },
+
+    clearRetouch() {
+      get().update((r) => ({ ...r, retouch: [] }));
+    },
+
+    setRemoveObjects: (removeObjects) => set({ removeObjects }),
 
     async importLut(uri, name) {
       const text = await new File(uri).text();

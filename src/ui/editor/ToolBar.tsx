@@ -16,6 +16,7 @@ export const TOOLS: { id: ToolId; icon: IconName; label: string }[] = [
   { id: 'hsl', icon: 'color-palette-outline', label: 'tools.hsl' },
   { id: 'grading', icon: 'color-filter-outline', label: 'tools.grading' },
   { id: 'masks', icon: 'layers-outline', label: 'tools.masks' },
+  { id: 'retouch', icon: 'bandage-outline', label: 'tools.retouch' },
   { id: 'detail', icon: 'aperture-outline', label: 'tools.detail' },
   { id: 'geometry', icon: 'crop-outline', label: 'tools.geometry' },
   { id: 'optics', icon: 'eye-outline', label: 'tools.optics' },

@@ -29,6 +29,7 @@ import {
 import { GeometryPanel } from '@/ui/editor/panels/GeometryPanel';
 import { MasksPanel, useBrush } from '@/ui/editor/panels/MasksPanel';
 import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
+import { RetouchPanel } from '@/ui/editor/panels/RetouchPanel';
 import { VersionsPanel } from '@/ui/editor/panels/VersionsPanel';
 import { ToolBar } from '@/ui/editor/ToolBar';
 import { Button, IconButton } from '@/ui/kit';
@@ -119,6 +120,8 @@ export default function EditorScreen() {
         return <LutPanel recipe={recipe} />;
       case 'masks':
         return <MasksPanel recipe={recipe} brush={brush} />;
+      case 'retouch':
+        return <RetouchPanel recipe={recipe} brush={brush} />;
       case 'raw':
         return <RawPanel recipe={recipe} />;
       default:

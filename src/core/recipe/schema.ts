@@ -126,7 +126,18 @@ export interface RawSettings {
   boost: number;
 }
 
-export type MaskType = 'brush' | 'linear' | 'radial' | 'luminance' | 'color' | 'subject' | 'sky' | 'background' | 'person';
+export type MaskType =
+  | 'brush'
+  | 'linear'
+  | 'radial'
+  | 'luminance'
+  | 'color'
+  | 'subject'
+  | 'sky'
+  | 'background'
+  | 'person'
+  /** Brush roughly over something; the detected object(s) under the strokes are selected. */
+  | 'object';
 
 export interface BrushStroke {
   points: number[]; // flattened x,y normalized
@@ -186,10 +197,22 @@ export interface Mask {
   invert: boolean;
   opacity: number; // 0..100
   geometry: MaskGeometry;
+  /**
+   * brush: the mask itself. object: the selection strokes (erase strokes subtract).
+   * AI masks: add / subtract refinements on top of the detection.
+   */
   strokes: BrushStroke[];
   /** Range refinement intersected with the mask (or the mask itself for luminance/color). */
   range: RangeSpec;
   adjust: LocalAdjust;
+}
+
+/** One content-aware removal: everything under the strokes is rebuilt from its surroundings. */
+export interface RetouchSpot {
+  id: string;
+  strokes: BrushStroke[];
+  /** Grow the area to the whole detected object under the strokes (and its edges). */
+  objectAware: boolean;
 }
 
 export interface SourceRef {
@@ -220,6 +243,8 @@ export interface Recipe {
   effects: Effects;
   lut: LutRef;
   masks: Mask[];
+  /** Object / distraction removals, applied to the photo before any adjustment, in order. */
+  retouch: RetouchSpot[];
   /** Profile look: 'color' | 'vivid' | 'neutral' | 'flat' | 'mono'. */
   profile: ProfileId;
   updatedAt: number;
@@ -242,6 +267,7 @@ export const RECIPE_SECTIONS = [
   'effects',
   'lut',
   'masks',
+  'retouch',
 ] as const;
 export type RecipeSection = (typeof RECIPE_SECTIONS)[number];
 

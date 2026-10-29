@@ -68,6 +68,11 @@ public class HikariNativeModule: Module {
       return try Segmentation.segment(url: url, kind: kind, maxDim: maxDim, preferRaw: preferRaw)
     }
 
+    AsyncFunction("segmentInstances") { (uri: String, maxDim: Int, preferRaw: Bool) -> [String: Any]? in
+      let url = try await Library.resolve(uri: uri, preferRaw: preferRaw)
+      return try Segmentation.instances(url: url, maxDim: maxDim, preferRaw: preferRaw)
+    }
+
     AsyncFunction("assetResources") { (assetId: String) -> [String: Any]? in
       Library.resources(assetId: assetId)
     }

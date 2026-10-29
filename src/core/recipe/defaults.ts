@@ -68,6 +68,7 @@ export function defaultSettings(): RecipeSettings {
     effects: defaultEffects(),
     lut: { id: null, name: null, intensity: 100 },
     masks: [],
+    retouch: [],
   };
 }
 

@@ -96,6 +96,11 @@ export interface MaskResult {
   height: number;
 }
 
+export interface InstancesResult extends MaskResult {
+  /** Number of objects; the PNG's red channel holds 1..count per object, 0 for background. */
+  count: number;
+}
+
 export interface FolderGrant {
   uri: string;
   /** Base64 security-scoped bookmark (iOS) to restore access after relaunch. */
@@ -108,6 +113,7 @@ interface HikariNativeSpec {
   readMetadata(uri: string): Promise<PhotoMetadata>;
   encodeImage(pixels: Uint8Array, width: number, height: number, options: EncodeOptions): Promise<{ path: string; size: number }>;
   segment(uri: string, kind: SegmentKind, maxDim: number, preferRaw: boolean): Promise<MaskResult | null>;
+  segmentInstances(uri: string, maxDim: number, preferRaw: boolean): Promise<InstancesResult | null>;
   assetResources(assetId: string): Promise<AssetResources | null>;
   exportAssetResource(assetId: string, kind: 'raw' | 'photo'): Promise<string>;
   saveEditToLibrary(assetId: string, renderedPath: string, adjustmentJson: string, formatVersion: string): Promise<boolean>;
@@ -134,6 +140,8 @@ export const encodeImage = (pixels: Uint8Array, width: number, height: number, o
   native().encodeImage(pixels, width, height, options);
 export const segment = (uri: string, kind: SegmentKind, maxDim: number, preferRaw: boolean) =>
   native().segment(uri, kind, maxDim, preferRaw);
+export const segmentInstances = (uri: string, maxDim: number, preferRaw: boolean) =>
+  native().segmentInstances(uri, maxDim, preferRaw);
 export const assetResources = (assetId: string) => (Native ? Native.assetResources(assetId) : Promise.resolve(null));
 export const exportAssetResource = (assetId: string, kind: 'raw' | 'photo') => native().exportAssetResource(assetId, kind);
 export const saveEditToLibrary = (assetId: string, renderedPath: string, json: string, version: string) =>

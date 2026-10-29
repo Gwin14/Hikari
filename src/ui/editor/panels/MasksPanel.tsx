@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
+import { isAiMask } from '@/core/pipeline/masks';
 import type { Mask, MaskType, Recipe } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
 import { Chip, ChipRow, IconButton, SectionTitle, ToggleRow, type IconName } from '../../kit';
@@ -18,6 +19,7 @@ const KINDS: { type: MaskType; icon: IconName; ai?: boolean }[] = [
   { type: 'sky', icon: 'cloud-outline', ai: true },
   { type: 'background', icon: 'image-outline', ai: true },
   { type: 'person', icon: 'people-outline', ai: true },
+  { type: 'object', icon: 'scan-outline', ai: true },
   { type: 'brush', icon: 'brush-outline' },
   { type: 'linear', icon: 'reorder-four-outline' },
   { type: 'radial', icon: 'radio-button-off-outline' },
@@ -39,7 +41,9 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
   const active = recipe.masks.find((m) => m.id === activeId) ?? null;
   const index = active ? recipe.masks.indexOf(active) : -1;
 
-  const kinds = KINDS.filter((k) => !k.ai || k.type === 'sky' || isNativeAvailable);
+  // sky is a JS heuristic and object masks fall back to edge-snapped strokes without detection
+  const kinds = KINDS.filter((k) => !k.ai || k.type === 'sky' || k.type === 'object' || isNativeAvailable);
+  const brushing = useEditor((s) => s.maskBrushing);
 
   return (
     <>
@@ -80,6 +84,7 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
           recipe={recipe}
           brush={brush}
           overlay={overlay}
+          brushing={brushing}
           status={busy === active.id ? t('masks.detecting') : failed.includes(active.id) ? t('masks.notFound') : null}
           onOverlay={setMaskOverlay}
           onUpdate={(fn) => updateMask(active.id, fn)}
@@ -96,6 +101,8 @@ function MaskEditor(p: {
   recipe: Recipe;
   brush: SharedValue<BrushSettings>;
   overlay: boolean;
+  /** Painting refinements on an AI mask. */
+  brushing: boolean;
   /** AI detection progress / failure message. */
   status: string | null;
   onOverlay(v: boolean): void;
@@ -117,6 +124,28 @@ function MaskEditor(p: {
       </View>
       {p.status && <Text style={styles.empty}>{p.status}</Text>}
       {m.type === 'brush' && <BrushControls brush={p.brush} />}
+      {m.type === 'object' && (
+        <>
+          <Text style={styles.empty}>{t('masks.objectHint')}</Text>
+          <BrushControls brush={p.brush} refine />
+        </>
+      )}
+      {isAiMask(m) && m.type !== 'object' && (
+        <>
+          <ToggleRow
+            label={t('masks.refineBrush')}
+            hint={t('masks.refineBrushHint')}
+            value={p.brushing}
+            onChange={(v) => useEditor.getState().setMaskBrushing(v)}
+          />
+          {p.brushing && <BrushControls brush={p.brush} refine />}
+          {m.strokes.length > 0 && (
+            <ChipRow>
+              <Chip icon="refresh" label={t('masks.clearRefine')} onPress={() => p.onUpdate((x) => ({ ...x, strokes: [] }))} />
+            </ChipRow>
+          )}
+        </>
+      )}
       {m.type === 'color' && <Text style={styles.empty}>{t('masks.pickColor')}</Text>}
       {(m.type === 'luminance' || m.type === 'color' || m.type === 'linear' || m.type === 'radial') && (
         <>
@@ -183,7 +212,8 @@ function MaskEditor(p: {
   );
 }
 
-function BrushControls({ brush }: { brush: SharedValue<BrushSettings> }) {
+/** `refine`: strokes add to / subtract from a detected selection. */
+function BrushControls({ brush, refine }: { brush: SharedValue<BrushSettings>; refine?: boolean }) {
   const { t } = useTranslation();
   // React state mirrors the shared value so the controls re-render.
   const [b, setB] = useState<BrushSettings>(() => brush.value);
@@ -195,8 +225,13 @@ function BrushControls({ brush }: { brush: SharedValue<BrushSettings> }) {
   return (
     <>
       <ChipRow>
-        <Chip icon="brush" label={t('masks.brush')} active={!b.erase} onPress={() => set({ erase: false })} />
-        <Chip icon="remove-circle-outline" label={t('masks.erase')} active={b.erase} onPress={() => set({ erase: true })} />
+        <Chip icon={refine ? 'add-circle-outline' : 'brush'} label={t(refine ? 'masks.paintAdd' : 'masks.brush')} active={!b.erase} onPress={() => set({ erase: false })} />
+        <Chip
+          icon="remove-circle-outline"
+          label={t(refine ? 'masks.paintSubtract' : 'masks.erase')}
+          active={b.erase}
+          onPress={() => set({ erase: true })}
+        />
       </ChipRow>
       <Slider label={t('masks.size')} min={1} max={30} neutral={6} value={b.size * 100} onCommit={(v) => set({ size: v / 100 })} />
       <Slider label={t('masks.hardness')} min={0} max={100} neutral={50} value={b.hardness * 100} onCommit={(v) => set({ hardness: v / 100 })} />

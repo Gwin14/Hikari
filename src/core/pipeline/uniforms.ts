@@ -165,7 +165,9 @@ export function developUniforms(r: Recipe, f: FrameInfo): UniformValues {
 
 export const maskUsesTexture = (m: Mask) => {
   'worklet';
-  return m.type === 'brush' || m.type === 'subject' || m.type === 'sky' || m.type === 'background' || m.type === 'person';
+  return (
+    m.type === 'brush' || m.type === 'subject' || m.type === 'sky' || m.type === 'background' || m.type === 'person' || m.type === 'object'
+  );
 };
 
 export function localUniforms(m: Mask, f: FrameInfo, overlay: boolean): UniformValues {

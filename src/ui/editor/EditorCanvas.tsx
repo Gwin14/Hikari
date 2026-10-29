@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { isAiMask } from '@/core/pipeline/masks';
 import { drawRecipe } from '@/core/pipeline/render';
 import type { BrushStroke, Mask } from '@/core/recipe/schema';
 import { liveInputs, liveRecipe, useEditor } from '@/state/editor';
@@ -37,6 +38,7 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
   const activeMaskId = useEditor((s) => s.activeMaskId);
   const maskOverlay = useEditor((s) => s.maskOverlay);
   const recipe = useEditor((s) => s.recipe);
+  const maskBrushing = useEditor((s) => s.maskBrushing);
   const activeMask = recipe?.masks.find((m) => m.id === activeMaskId) ?? null;
 
   const vw = useSharedValue(0);
@@ -55,7 +57,12 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
   const strokePts = useSharedValue<number[]>([]);
 
   const isCrop = tool === 'geometry';
-  const painting = tool === 'masks' && activeMask?.type === 'brush';
+  const removing = tool === 'retouch';
+  const painting =
+    removing ||
+    (tool === 'masks' &&
+      !!activeMask &&
+      (activeMask.type === 'brush' || activeMask.type === 'object' || (isAiMask(activeMask) && maskBrushing)));
   const picking = tool === 'masks' && activeMask?.type === 'color';
 
   useEffect(() => {
@@ -118,7 +125,13 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
     return pb.build();
   });
   const strokeWidth = useDerivedValue(() => Math.max(2, brush.value.size * screenLongEdge(view.value)));
-  const strokeColor = useDerivedValue(() => (brush.value.erase ? 'rgba(80,160,255,0.45)' : 'rgba(255,70,90,0.45)'));
+  const removeMode = useSharedValue(false);
+  useEffect(() => {
+    removeMode.set(removing);
+  }, [removing, removeMode]);
+  const strokeColor = useDerivedValue(() =>
+    removeMode.value ? 'rgba(255,255,255,0.55)' : brush.value.erase ? 'rgba(80,160,255,0.45)' : 'rgba(255,70,90,0.45)',
+  );
 
   const onLayout = (e: LayoutChangeEvent) => {
     vw.set(e.nativeEvent.layout.width);
@@ -199,7 +212,12 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
     });
 
   const addStroke = (pts: number[], b: BrushSettings) => {
-    if (!activeMaskId || pts.length < 2) return;
+    if (pts.length < 2) return;
+    if (removing) {
+      useEditor.getState().addRetouch({ points: pts, size: b.size, hardness: 1, flow: 1, erase: false });
+      return;
+    }
+    if (!activeMaskId) return;
     const stroke: BrushStroke = { points: pts, size: b.size, hardness: b.hardness, flow: b.flow, erase: b.erase };
     useEditor.getState().updateMask(activeMaskId, (m: Mask) => ({ ...m, strokes: [...m.strokes, stroke] }));
   };
