@@ -214,6 +214,12 @@ const en = {
     applied: 'Preset applied',
     sections: 'Include',
     amount: 'Amount',
+    exportLightroom: 'Export for Lightroom (.xmp)',
+    exportCurrent: 'Export current settings',
+    exportCurrentHint: 'Compatible settings from the current edit. The LUT holds color and tone only (no masks, sharpening, noise, vignette or grain).',
+    asLightroom: 'Lightroom preset (.xmp)',
+    asLut: 'LUT (.cube)',
+    importedMany: '{{count}} presets imported',
   },
   sections: {
     profile: 'Profile',

@@ -5,9 +5,11 @@ import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { deletePreset, listPresets, presetFromFile, presetToFile, savePreset } from '@/core/recipe/presetStore';
+import { bakeLut } from '@/core/export/lut';
+import { deletePreset, listPresets, presetFromFile, presetToFile, presetToLightroom, savePreset } from '@/core/recipe/presetStore';
 import type { Preset } from '@/core/recipe/presets';
 import { RECIPE_SECTIONS, type Recipe, type RecipeSection } from '@/core/recipe/schema';
+import { pickSections } from '@/core/recipe/ops';
 import { useEditor } from '@/state/editor';
 import { Button, Chip, ChipRow, SectionTitle } from '../../kit';
 import { Slider } from '../../Slider';
@@ -36,26 +38,63 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
   };
 
   const importPreset = async () => {
-    const res = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
-    if (res.canceled || !res.assets?.[0]) return;
-    try {
-      presetFromFile(await new File(res.assets[0].uri).text());
-      setVersion((v) => v + 1);
-    } catch (e) {
-      Alert.alert(t('common.error'), e instanceof Error ? e.message : String(e));
+    const res = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true, multiple: true });
+    if (res.canceled || !res.assets?.length) return;
+    const imported: string[] = [];
+    const failed: string[] = [];
+    for (const a of res.assets) {
+      try {
+        imported.push(presetFromFile(await new File(a.uri).text(), a.name).name);
+      } catch (e) {
+        failed.push(`${a.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
+    setVersion((v) => v + 1);
+    if (failed.length) Alert.alert(t('common.error'), failed.join('\n'));
+    else if (imported.length > 1) Alert.alert(t('presets.importedMany', { count: imported.length }));
   };
 
-  const share = async (p: Preset) => {
-    const f = new File(Paths.cache, `${p.name.replace(/[^\w-]+/g, '_')}.hikari`);
-    f.write(presetToFile(p));
-    await Sharing.shareAsync(f.uri, { mimeType: 'application/json', dialogTitle: p.name });
+  const shareText = async (filename: string, text: string, mimeType: string, title: string) => {
+    const f = new File(Paths.cache, filename);
+    if (f.exists) f.delete();
+    f.write(text);
+    await Sharing.shareAsync(f.uri, { mimeType, dialogTitle: title, UTI: mimeType === 'application/rdf+xml' ? 'public.xml' : undefined });
+  };
+  const safeName = (n: string) => n.replace(/[^\w-]+/g, '_') || 'Hikari';
+
+  const share = (p: Preset) => shareText(`${safeName(p.name)}.hikari`, presetToFile(p), 'application/json', p.name);
+  const shareLightroom = (p: Preset) => shareText(`${safeName(p.name)}.xmp`, presetToLightroom(p), 'application/rdf+xml', p.name);
+
+  const exportCurrent = () => {
+    const name = recipe.source.filename.replace(/\.[^.]+$/, '') || 'Hikari';
+    Alert.alert(t('presets.exportCurrent'), t('presets.exportCurrentHint'), [
+      {
+        text: t('presets.asLightroom'),
+        onPress: () =>
+          shareLightroom({ id: 'current', name, group: 'mine', builtIn: false, settings: pickSections(recipe, LIGHTROOM_SECTIONS) }),
+      },
+      {
+        text: t('presets.asLut'),
+        onPress: async () => {
+          try {
+            await shareText(`${safeName(name)}.cube`, bakeLut(recipe, name), 'application/octet-stream', name);
+          } catch (e) {
+            Alert.alert(t('common.error'), e instanceof Error ? e.message : String(e));
+          }
+        },
+      },
+      { text: t('common.cancel'), style: 'cancel' },
+    ]);
   };
 
   const manage = (p: Preset) => {
-    if (p.builtIn) return share(p);
-    Alert.alert(p.name, undefined, [
+    const exports = [
       { text: t('presets.exportPreset'), onPress: () => share(p) },
+      { text: t('presets.exportLightroom'), onPress: () => shareLightroom(p) },
+    ];
+    if (p.builtIn) return Alert.alert(p.name, undefined, [...exports, { text: t('common.cancel'), style: 'cancel' }]);
+    Alert.alert(p.name, undefined, [
+      ...exports,
       {
         text: t('common.delete'),
         style: 'destructive',
@@ -73,6 +112,7 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
       <ChipRow>
         <Chip icon="add" label={t('presets.create')} onPress={() => setSaving(true)} />
         <Chip icon="download-outline" label={t('presets.import')} onPress={importPreset} />
+        <Chip icon="share-outline" label={t('presets.exportCurrent')} onPress={exportCurrent} />
       </ChipRow>
       {selected && (
         <Slider
@@ -138,6 +178,9 @@ export function SectionPicker({ value, onChange }: { value: RecipeSection[]; onC
     </View>
   );
 }
+
+/** Everything Lightroom understands (local masks and Hikari LUTs have no Camera Raw equivalent). */
+const LIGHTROOM_SECTIONS: RecipeSection[] = ['profile', 'light', 'color', 'curves', 'hsl', 'grading', 'detail', 'lens', 'effects'];
 
 const DEFAULT_SECTIONS: RecipeSection[] = ['profile', 'light', 'color', 'curves', 'hsl', 'grading', 'detail', 'effects', 'lut'];
 

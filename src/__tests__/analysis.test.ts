@@ -175,7 +175,9 @@ describe('XMP sidecars', () => {
     const lr = '<x:xmpmeta><rdf:Description crs:Exposure2012="-0.50" crs:Contrast2012="+12" crs:Vibrance="8" xmp:Rating="3"/></x:xmpmeta>';
     const d = readSidecar(lr);
     expect(d.recipe).toBeNull();
-    expect(d.crs).toEqual({ exposure: -0.5, contrast: 12, vibrance: 8 });
+    expect(d.crs.light).toMatchObject({ exposure: -0.5, contrast: 12, highlights: 0 });
+    expect(d.crs.color?.vibrance).toBe(8);
+    expect(d.crs.hsl).toBeUndefined();
     expect(d.rating).toBe(3);
   });
 });
