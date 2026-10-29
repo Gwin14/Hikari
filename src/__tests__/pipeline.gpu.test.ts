@@ -4,6 +4,7 @@
  * Renders the real SkSL pipeline with CanvasKit (same SkSL compiler as react-native-skia)
  * and checks known input → output values.
  */
+import { identityStrip, parseCube, stripToCube } from '@/core/color/cube';
 import { bakeCurveLut } from '@/core/color/curve';
 import { createMask, createRecipe } from '@/core/recipe/defaults';
 import type { Recipe } from '@/core/recipe/schema';
@@ -227,5 +228,56 @@ describe('develop pipeline (CanvasKit)', () => {
     let maxErr = 0;
     for (let i = 0; i < a.length; i++) maxErr = Math.max(maxErr, Math.abs(a[i] - b[i]));
     expect(maxErr).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('LUT export (CanvasKit)', () => {
+  const n = 9;
+  const bake = (r: Recipe) => {
+    const w = n * n;
+    const srcSh = shaderOf(image(identityStrip(n), w, n));
+    const curve = shaderOf(image(bakeCurveLut(r.curves), 256, 1));
+    const frame = { width: w, height: n, isRaw: false };
+    const dev = programs.develop.effect.makeShaderWithChildren(packUniforms(programs.develop.layout, developUniforms(r, frame)), [
+      srcSh, srcSh, srcSh, srcSh, curve,
+    ]);
+    const pass = (outMode: number) => {
+      const sh = programs.finish.effect.makeShaderWithChildren(
+        packUniforms(programs.finish.layout, finishUniforms(r, frame, { crop: [0, 0, w, n], lutSize: 0, clip: false, outMode })),
+        [dev, srcSh, srcSh, srcSh, srcSh],
+      );
+      const surface = CK.MakeSurface(w, n);
+      const paint = new CK.Paint();
+      paint.setShader(sh);
+      surface.getCanvas().drawRect(CK.XYWHRect(0, 0, w, n), paint);
+      surface.flush();
+      const out = surface.makeImageSnapshot().readPixels(0, 0, {
+        width: w, height: n, colorType: CK.ColorType.RGBA_8888, alphaType: CK.AlphaType.Unpremul, colorSpace: CK.ColorSpace.SRGB,
+      });
+      surface.delete();
+      return out as Uint8Array;
+    };
+    return parseCube(stripToCube(pass(2), pass(3), n, 'T'));
+  };
+
+  it('bakes the default recipe into an identity LUT', () => {
+    const cube = bake(base());
+    let maxErr = 0;
+    for (let b = 0; b < n; b++)
+      for (let g = 0; g < n; g++)
+        for (let r = 0; r < n; r++) {
+          const i = (b * n * n + g * n + r) * 3;
+          const exp = [r, g, b].map((v) => Math.round((v / (n - 1)) * 255) / 255);
+          for (let c = 0; c < 3; c++) maxErr = Math.max(maxErr, Math.abs(cube.data[i + c] - exp[c]));
+        }
+    expect(maxErr).toBeLessThan(2 / 255);
+  });
+
+  it('bakes adjustments into the LUT', () => {
+    const r = base();
+    r.light.exposure = 1;
+    const cube = bake(r);
+    const mid = (4 * n * n + 4 * n + 4) * 3; // 50% grey
+    expect(cube.data[mid]).toBeGreaterThan(0.6);
   });
 });

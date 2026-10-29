@@ -234,6 +234,12 @@ const ptBR: Dict = {
     applied: 'Predefinição aplicada',
     sections: 'Incluir',
     amount: 'Intensidade',
+    exportLightroom: 'Exportar para Lightroom (.xmp)',
+    exportCurrent: 'Exportar ajustes atuais',
+    exportCurrentHint: 'Ajustes compatíveis da edição atual. A LUT contém só cor e tom (sem máscaras, nitidez, ruído, vinheta ou granulação).',
+    asLightroom: 'Predefinição Lightroom (.xmp)',
+    asLut: 'LUT (.cube)',
+    importedMany: '{{count}} predefinições importadas',
   },
   sections: {
     profile: 'Perfil',

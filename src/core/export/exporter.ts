@@ -35,7 +35,7 @@ export function sourceFromItem(item: PhotoItem, useRaw: boolean): SourceRef {
 
 export const recipeFor = (item: PhotoItem): Recipe => db.loadRecipe(item.key) ?? createRecipe(sourceFromItem(item, true));
 
-function lutFor(id: string | null) {
+export function lutFor(id: string | null) {
   if (!id) return null;
   const row = db.getLut(id);
   if (!row) return null;

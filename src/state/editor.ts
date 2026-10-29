@@ -809,18 +809,7 @@ function recipeFromSidecar(item: PhotoItem): Recipe | null {
         useRaw: item.isRaw || !!item.pair,
         isRaw: item.isRaw,
       });
-      const c = data.crs;
-      r.light = {
-        exposure: c.exposure ?? 0,
-        contrast: c.contrast ?? 0,
-        highlights: c.highlights ?? 0,
-        shadows: c.shadows ?? 0,
-        whites: c.whites ?? 0,
-        blacks: c.blacks ?? 0,
-      };
-      r.detail = { ...r.detail, clarity: c.clarity ?? 0, dehaze: c.dehaze ?? 0, texture: c.texture ?? 0 };
-      r.color = { ...r.color, vibrance: c.vibrance ?? 0, saturation: c.saturation ?? 0 };
-      return r;
+      return applySettings(r, data.crs, false);
     }
   } catch {
     // unreadable sidecar → start fresh

@@ -64,3 +64,40 @@ export function cubeToStrip(lut: CubeLut): { width: number; height: number; pixe
   }
   return { width, height: n, pixels };
 }
+
+/** Identity lattice laid out like `cubeToStrip`: width n², height n, x = b·n + r, y = g. */
+export function identityStrip(n: number): Uint8Array {
+  const w = n * n;
+  const px = new Uint8Array(w * n * 4);
+  for (let b = 0; b < n; b++)
+    for (let g = 0; g < n; g++)
+      for (let r = 0; r < n; r++) {
+        const i = (g * w + b * n + r) * 4;
+        px[i] = Math.round((r / (n - 1)) * 255);
+        px[i + 1] = Math.round((g / (n - 1)) * 255);
+        px[i + 2] = Math.round((b / (n - 1)) * 255);
+        px[i + 3] = 255;
+      }
+  return px;
+}
+
+/** Writes an Adobe .cube from the rendered strip's 16-bit planes (high and low bytes). */
+export function stripToCube(hi: Uint8Array, lo: Uint8Array, n: number, title: string): string {
+  const w = n * n;
+  const lines = [
+    `TITLE "${title.replace(/"/g, "'")}"`,
+    '# Created with Hikari',
+    `LUT_3D_SIZE ${n}`,
+    'DOMAIN_MIN 0.0 0.0 0.0',
+    'DOMAIN_MAX 1.0 1.0 1.0',
+  ];
+  const v = (i: number) => ((hi[i] * 256 + lo[i]) / 65535).toFixed(6);
+  // .cube order: red changes fastest, then green, then blue
+  for (let b = 0; b < n; b++)
+    for (let g = 0; g < n; g++)
+      for (let r = 0; r < n; r++) {
+        const i = (g * w + b * n + r) * 4;
+        lines.push(`${v(i)} ${v(i + 1)} ${v(i + 2)}`);
+      }
+  return lines.join('\n') + '\n';
+}

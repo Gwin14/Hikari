@@ -2,6 +2,7 @@ import { deleteRow, listJson, newId, upsertJson } from '../db/db';
 import { pickSections } from './ops';
 import { BUILT_IN_PRESETS, type Preset } from './presets';
 import { RECIPE_SECTIONS, type RecipeSection, type RecipeSettings } from './schema';
+import { crsToSettings, parseLrTemplate, parseXmpCrs, writeLightroomPreset } from '../xmp/crs';
 
 export function listPresets(): Preset[] {
   const mine = listJson<Partial<RecipeSettings>>('presets', 'settings').map((p) => ({
@@ -28,12 +29,31 @@ export function presetToFile(p: Preset): string {
   return JSON.stringify({ format: 'hikari-preset', version: 1, name: p.name, settings: p.settings }, null, 2);
 }
 
-export function presetFromFile(text: string): Preset {
-  const data = JSON.parse(text);
-  if (data?.format !== 'hikari-preset' || typeof data.settings !== 'object') throw new Error('Not a Hikari preset');
-  const settings: Partial<RecipeSettings> = {};
-  for (const k of RECIPE_SECTIONS) if (k in data.settings) (settings as Record<string, unknown>)[k] = data.settings[k];
+/** Lightroom Classic / Lightroom / ACR develop preset (.xmp). */
+export const presetToLightroom = (p: Preset): string => writeLightroomPreset(p.name, p.settings);
+
+const baseName = (filename: string) => filename.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '') || 'Preset';
+
+/** Parses a preset file without saving it: Hikari (.hikari), Lightroom (.xmp) or legacy Lightroom (.lrtemplate). */
+export function parsePresetFile(text: string, filename = ''): { name: string; settings: Partial<RecipeSettings> } {
+  const trimmed = text.replace(/^\uFEFF/, '').trimStart();
+  if (trimmed.startsWith('{')) {
+    const data = JSON.parse(trimmed);
+    if (data?.format !== 'hikari-preset' || typeof data.settings !== 'object') throw new Error('Not a Hikari preset');
+    const settings: Partial<RecipeSettings> = {};
+    for (const k of RECIPE_SECTIONS) if (k in data.settings) (settings as Record<string, unknown>)[k] = data.settings[k];
+    return { name: String(data.name ?? baseName(filename)), settings };
+  }
+  const lr = trimmed.startsWith('<') || /<x:xmpmeta|camera-raw-settings/.test(trimmed) ? parseXmpCrs(trimmed) : parseLrTemplate(trimmed);
+  if (lr.values.PresetType && lr.values.PresetType !== 'Normal') throw new Error('Profiles (.xmp with LUT tables) are not supported; import a develop preset');
+  const { settings, used } = crsToSettings(lr.values);
+  if (!used) throw new Error('No compatible settings found in this preset');
+  return { name: lr.name || baseName(filename), settings };
+}
+
+export function presetFromFile(text: string, filename = ''): Preset {
+  const { name, settings } = parsePresetFile(text, filename);
   const id = newId();
-  upsertJson('presets', 'settings', id, String(data.name ?? 'Preset'), settings);
-  return { id, name: String(data.name ?? 'Preset'), group: 'mine', builtIn: false, settings };
+  upsertJson('presets', 'settings', id, name, settings);
+  return { id, name, group: 'mine', builtIn: false, settings };
 }
