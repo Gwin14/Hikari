@@ -9,7 +9,7 @@ import { listFolder, openFolder } from '@/core/sources/folders';
 import type { FolderEntry, PhotoItem } from '@/core/sources/types';
 import { applyFilter, defaultFilter, useLibrary, type ViewFilter } from '@/state/library';
 import { BrowserHeader, FilterBar, SelectionBar } from '@/ui/BrowserChrome';
-import { Button, IconButton } from '@/ui/kit';
+import { Button, EmptyState, IconButton } from '@/ui/kit';
 import { PhotoGrid } from '@/ui/PhotoGrid';
 import { colors, common, font, radius, space } from '@/ui/theme';
 
@@ -64,13 +64,18 @@ export default function FolderScreen() {
       <BrowserHeader
         title={title}
         subtitle={t('folders.items', { count: visible.length })}
-        left={<IconButton icon="chevron-back" size={26} onPress={() => router.back()} />}
-        right={<IconButton icon={selecting ? 'close' : 'checkmark-circle-outline'} onPress={() => setSelecting(!selecting)} />}
+        left={<IconButton icon="chevron-back" size={26} onPress={() => router.back()} label={t('common.close')} />}
+        right={
+          <IconButton
+            icon={selecting ? 'close' : 'checkmark-circle-outline'}
+            onPress={() => setSelecting(!selecting)}
+            label={selecting ? t('common.cancel') : t('common.select')}
+          />
+        }
       />
       {error ? (
-        <View style={[common.center, { flex: 1, padding: space.xl }]}>
-          <Text style={[common.text, { textAlign: 'center', marginBottom: space.lg }]}>{error}</Text>
-          <Button label={t('common.retry')} onPress={() => router.back()} />
+        <View style={[common.center, { flex: 1 }]}>
+          <EmptyState icon="lock-closed-outline" title={error} action={<Button label={t('common.retry')} onPress={() => router.back()} />} />
         </View>
       ) : (
         <PhotoGrid
@@ -101,7 +106,7 @@ export default function FolderScreen() {
               <FilterBar value={filter} onChange={setFilter} />
             </View>
           }
-          empty={<Text style={styles.empty}>{t('library.empty')}</Text>}
+          empty={<EmptyState icon="images-outline" title={t('library.empty')} body={t('library.emptyBody')} style={styles.empty} />}
         />
       )}
       <SelectionBar items={visible} />
@@ -115,12 +120,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    minHeight: 36,
+    borderRadius: radius.pill,
     backgroundColor: colors.surface,
     maxWidth: 200,
   },
-  subText: { color: colors.text, fontSize: font.sm },
-  empty: { color: colors.textDim, textAlign: 'center', marginTop: 80 },
+  subText: { color: colors.text, fontSize: font.sm, fontWeight: '600' },
+  empty: { marginTop: 96 },
 });

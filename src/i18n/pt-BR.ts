@@ -34,6 +34,7 @@ const ptBR: Dict = {
     permissionButton: 'Permitir acesso',
     limited: 'Acesso limitado — toque para escolher mais fotos',
     empty: 'Nenhuma foto aqui ainda',
+    emptyBody: 'Tente outro filtro ou álbum.',
   },
   folders: {
     title: 'Pastas',
@@ -58,6 +59,10 @@ const ptBR: Dict = {
     sortName: 'Nome',
   },
   editor: {
+    position: '{{n}} de {{total}}',
+    more: 'Mais',
+    undo: 'Desfazer',
+    redo: 'Refazer',
     compare: 'Comparar',
     split: 'Divisão',
     hold: 'Segure para ver o original',

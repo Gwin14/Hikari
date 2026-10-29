@@ -2,13 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { deleteRow, type FolderRow } from '@/core/db/db';
 import { addFolderInteractive, listFolders } from '@/core/sources/folders';
 import { BrowserHeader } from '@/ui/BrowserChrome';
-import { Button, IconButton } from '@/ui/kit';
-import { colors, common, font, radius, space } from '@/ui/theme';
+import { Button, EmptyState, IconButton, PressableScale } from '@/ui/kit';
+import { colors, common, curve, font, radius, space } from '@/ui/theme';
 
 export default function FoldersScreen() {
   const { t } = useTranslation();
@@ -47,16 +47,19 @@ export default function FoldersScreen() {
         keyExtractor={(f) => f.id}
         contentContainerStyle={{ padding: space.lg, gap: space.sm, flexGrow: 1, paddingBottom: 120 }}
         ListEmptyComponent={
-          <View style={[common.center, { flex: 1, paddingHorizontal: space.xl }]}>
-            <Ionicons name="folder-open-outline" size={56} color={colors.textFaint} />
-            <Text style={[common.title, { marginTop: space.lg, textAlign: 'center' }]}>{t('folders.emptyTitle')}</Text>
-            <Text style={styles.body}>{t('folders.emptyBody')}</Text>
-            <Button primary icon="add" label={t('folders.add')} onPress={add} />
+          <View style={[common.center, { flex: 1 }]}>
+            <EmptyState
+              icon="folder-open-outline"
+              title={t('folders.emptyTitle')}
+              body={t('folders.emptyBody')}
+              action={<Button primary icon="add" label={t('folders.add')} onPress={add} />}
+            />
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable
-            style={({ pressed }) => [styles.folder, pressed && { opacity: 0.7 }]}
+          <PressableScale
+            accessibilityRole="button"
+            style={styles.folder}
             onPress={() => router.push({ pathname: '/folder/[id]', params: { id: item.id } })}
             onLongPress={() => remove(item)}
           >
@@ -72,7 +75,7 @@ export default function FoldersScreen() {
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
-          </Pressable>
+          </PressableScale>
         )}
       />
     </View>
@@ -80,13 +83,13 @@ export default function FoldersScreen() {
 }
 
 const styles = StyleSheet.create({
-  body: { color: colors.textDim, fontSize: font.md, textAlign: 'center', marginVertical: space.lg, lineHeight: 21 },
   folder: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
     padding: space.md,
     borderRadius: radius.lg,
+    ...curve,
     backgroundColor: colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
@@ -95,6 +98,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: radius.md,
+    ...curve,
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',

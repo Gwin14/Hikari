@@ -32,6 +32,7 @@ const en = {
     permissionButton: 'Allow access',
     limited: 'Limited access — tap to choose more photos',
     empty: 'No photos here yet',
+    emptyBody: 'Try another filter or album.',
   },
   folders: {
     title: 'Folders',
@@ -56,6 +57,10 @@ const en = {
     sortName: 'Name',
   },
   editor: {
+    position: '{{n}} of {{total}}',
+    more: 'More',
+    undo: 'Undo',
+    redo: 'Redo',
     compare: 'Compare',
     split: 'Split view',
     hold: 'Hold to see original',
