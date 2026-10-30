@@ -6,6 +6,7 @@ import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from '
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { cachedThumb } from '@/core/thumbs';
 import { hasRaw, keyMatches } from '@/core/sources/types';
 import { prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
@@ -76,6 +77,10 @@ export default function EditorScreen() {
     if (prev) prefetchPhoto(prev);
   }, [ready, index, sequence]);
 
+  // opened from Komorebi: a cold-started deep link has no gallery underneath
+  const fromKomorebi = item?.kind === 'library' && !!handoffReturnUrl(item.id);
+  const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
+
   const landscape = width > height;
   const panelHeight = landscape ? undefined : Math.round(height * 0.34);
   const showRaw = !!item && (hasRaw(item) || hasPair || !!recipe?.source.isRaw);
@@ -136,7 +141,7 @@ export default function EditorScreen() {
   if (!item) {
     return (
       <View style={[common.screen, common.center]}>
-        <Button label={t('common.close')} onPress={() => router.back()} />
+        <Button label={t('common.close')} onPress={leave} />
       </View>
     );
   }
@@ -144,7 +149,7 @@ export default function EditorScreen() {
   return (
     <View style={[common.screen, { paddingTop: insets.top }]}>
       <View style={styles.top}>
-        <IconButton icon="chevron-back" size={26} onPress={() => router.back()} label={t('common.close')} />
+        <IconButton icon="chevron-back" size={26} onPress={leave} label={t('common.close')} />
         <IconButton icon="arrow-undo" disabled={!past} onPress={undo} label={t('editor.undo')} />
         <IconButton icon="arrow-redo" disabled={!future} onPress={redo} label={t('editor.redo')} />
         <View
@@ -164,6 +169,7 @@ export default function EditorScreen() {
             {item.pair || hasPair ? `${sequence.length > 1 ? ' · ' : ''}RAW+JPEG` : ''}
           </Text>
         </View>
+        {fromKomorebi && <IconButton icon="camera-outline" onPress={() => returnToKomorebi(item.id)} label={t('komorebi.back')} />}
         <IconButton icon="git-compare-outline" active={compare === 'split'} onPress={() => setCompare(compare === 'split' ? 'off' : 'split')} label={t('editor.split')} />
         <IconButton icon="ellipsis-horizontal-circle" onPress={() => setSheet('menu')} label={t('editor.more')} />
         <IconButton icon="share-outline" active onPress={() => router.push({ pathname: '/export', params: { keys: item.key } })} label={t('export.title')} />

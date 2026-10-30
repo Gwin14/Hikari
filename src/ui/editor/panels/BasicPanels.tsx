@@ -5,10 +5,13 @@ import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import { useTranslation } from 'react-i18next';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { listLuts } from '@/core/db/db';
+import { File } from 'expo-file-system';
+
+import { isCompanionShareAvailable, publishLutToKomorebi, syncKomorebiLuts } from '@/core/companion/komorebi';
+import { getLut, listLuts } from '@/core/db/db';
 import { HSL_BANDS, type HslBand, type ProfileId, type Recipe } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
-import { Chip, ChipRow, Segmented, SectionTitle, ToggleRow } from '../../kit';
+import { Chip, ChipRow, notifySuccess, Segmented, SectionTitle, ToggleRow } from '../../kit';
 import { ColorWheel } from '../ColorWheel';
 import { colors, font, space } from '../../theme';
 import { bipolar, Sliders, unipolar, useCommitPath } from './common';
@@ -141,6 +144,12 @@ export function EffectsPanel({ recipe }: { recipe: Recipe }) {
           unipolar(t('adj.grainAmount'), ['effects', 'grainAmount']),
           unipolar(t('adj.grainSize'), ['effects', 'grainSize'], { neutral: 25 }),
           unipolar(t('adj.grainRoughness'), ['effects', 'grainRoughness'], { neutral: 50 }),
+          unipolar(t('adj.halationAmount'), ['effects', 'halationAmount']),
+          unipolar(t('adj.halationThreshold'), ['effects', 'halationThreshold'], { neutral: 75 }),
+          unipolar(t('adj.halationRadius'), ['effects', 'halationRadius'], { neutral: 50 }),
+          unipolar(t('adj.bloomAmount'), ['effects', 'bloomAmount']),
+          unipolar(t('adj.bloomThreshold'), ['effects', 'bloomThreshold'], { neutral: 70 }),
+          unipolar(t('adj.bloomRadius'), ['effects', 'bloomRadius'], { neutral: 50 }),
         ]}
       />
       <ToggleRow label={t('adj.bw')} value={recipe.effects.bw} onChange={(v) => commit(['effects', 'bw'], v)} />
@@ -197,8 +206,24 @@ export function LutPanel({ recipe }: { recipe: Recipe }) {
   const { t } = useTranslation();
   const commit = useCommitPath();
   const importLut = useEditor((s) => s.importLut);
+  const [canShare] = useState(() => {
+    const available = isCompanionShareAvailable();
+    // LUTs from the camera show up here without importing them by hand
+    if (available) syncKomorebiLuts();
+    return available;
+  });
   const [version, setVersion] = useState(0);
   const luts = useMemo(() => listLuts(), [version]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sendToKomorebi = () => {
+    const row = recipe.lut.id ? getLut(recipe.lut.id) : null;
+    if (!row) return;
+    try {
+      if (publishLutToKomorebi(row.name, new File(row.path).textSync())) notifySuccess();
+      else Alert.alert(t('komorebi.unavailable'));
+    } catch {
+      Alert.alert(t('lut.invalid'));
+    }
+  };
   const pick = async () => {
     const res = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true });
     if (res.canceled || !res.assets?.[0]) return;
@@ -225,6 +250,11 @@ export function LutPanel({ recipe }: { recipe: Recipe }) {
         ))}
       </ChipRow>
       {recipe.lut.id && <Sliders recipe={recipe} specs={[unipolar(t('adj.intensity'), ['lut', 'intensity'], { neutral: 100 })]} />}
+      {canShare && recipe.lut.id && !recipe.lut.id.startsWith('komorebi-') && (
+        <ChipRow>
+          <Chip icon="camera-outline" label={t('komorebi.send')} onPress={sendToKomorebi} />
+        </ChipRow>
+      )}
     </>
   );
 }

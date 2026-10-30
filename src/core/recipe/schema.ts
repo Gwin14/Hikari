@@ -94,6 +94,14 @@ export interface Effects {
   grainAmount: number; // 0..100
   grainSize: number; // 0..100
   grainRoughness: number; // 0..100
+  /** Glow of the highlights, screen blended. */
+  bloomAmount: number; // 0..100
+  bloomThreshold: number; // 0..100
+  bloomRadius: number; // 0..100
+  /** Warm red fringe around bright areas, like film halation. */
+  halationAmount: number; // 0..100
+  halationThreshold: number; // 0..100
+  halationRadius: number; // 0..100
   bw: boolean;
   bwMix: Record<HslBand, number>; // -100..100
 }

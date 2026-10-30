@@ -30,6 +30,12 @@ export const defaultEffects = (): Effects => ({
   grainAmount: 0,
   grainSize: 25,
   grainRoughness: 50,
+  bloomAmount: 0,
+  bloomThreshold: 70,
+  bloomRadius: 50,
+  halationAmount: 0,
+  halationThreshold: 75,
+  halationRadius: 50,
   bw: false,
   bwMix: bands(() => 0),
 });

@@ -397,6 +397,7 @@ uniform shader prev;
 uniform shader source;
 uniform shader blurS;
 uniform shader blurM;
+uniform shader blurL;
 uniform shader lut;
 
 uniform float2 uSize;
@@ -409,6 +410,8 @@ uniform float4 uCrop;       // x,y,w,h in image px (post-crop frame for vignette
 uniform float4 uVignette;   // amount, midpoint, feather, roundness
 uniform float3 uGrain;      // amount, size, roughness
 uniform float uGrainScale;  // pixels per grain unit (resolution independence)
+uniform float3 uBloom;      // amount, threshold, radius
+uniform float3 uHalation;   // amount, threshold, radius
 uniform float uClip;        // 1 = show clipping
 uniform float uOutMode;     // 0 display, 1 data 8-bit, 2 high byte of 16-bit, 3 low byte
 uniform float uOutP3;       // data modes: encode values in Display P3 instead of sRGB
@@ -466,6 +469,26 @@ half4 main(float2 p) {
 
   // --- 3D LUT
   if (uLutMix > 0.0) e = mix(e, lut3(e), uLutMix);
+
+  // --- light effects: glow taken from the blurred source, blended like a soft screen
+  if (uBloom.x > 0.0 || uHalation.x > 0.0) {
+    float3 gm = encode(max(toLinearSrgb(blurM.eval(p).rgb), 0.0));
+    float3 gl = encode(max(toLinearSrgb(blurL.eval(p).rgb), 0.0));
+    float3 room = 1.0 - clamp(e, 0.0, 1.0);
+    if (uBloom.x > 0.0) {
+      float3 g = mix(gm, gl, uBloom.z);
+      float k = smoothstep(uBloom.y - 0.18, uBloom.y + 0.12, dot(g, LUMA));
+      e += clamp(g * k, 0.0, 1.0) * uBloom.x * room;
+    }
+    if (uHalation.x > 0.0) {
+      // around the highlights rather than on them: wide glow minus the sharp bright core
+      float ys = encode1(max(dot(toLinearSrgb(source.eval(p).rgb), LUMA), 0.0));
+      float yg = dot(mix(gm, gl, uHalation.z), LUMA);
+      float t = uHalation.y;
+      float halo = smoothstep(t - 0.15, t + 0.1, yg) * (1.0 - 0.7 * smoothstep(t - 0.05, t + 0.1, ys));
+      e += float3(1.0, 0.3, 0.1) * halo * uHalation.x * 0.8 * room;
+    }
+  }
 
   // --- post-crop vignette
   if (uVignette.x != 0.0) {

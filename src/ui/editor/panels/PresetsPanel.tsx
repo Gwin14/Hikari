@@ -5,13 +5,14 @@ import { useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { isCompanionShareAvailable, publishLutToKomorebi } from '@/core/companion/komorebi';
 import { bakeLut } from '@/core/export/lut';
 import { deletePreset, listPresets, presetFromFile, presetToFile, presetToLightroom, savePreset } from '@/core/recipe/presetStore';
 import type { Preset } from '@/core/recipe/presets';
 import { RECIPE_SECTIONS, type Recipe, type RecipeSection } from '@/core/recipe/schema';
 import { pickSections } from '@/core/recipe/ops';
 import { useEditor } from '@/state/editor';
-import { Button, Chip, ChipRow, SectionTitle } from '../../kit';
+import { Button, Chip, ChipRow, notifySuccess, SectionTitle } from '../../kit';
 import { Slider } from '../../Slider';
 import { colors, font, radius, space } from '../../theme';
 
@@ -83,7 +84,22 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
           }
         },
       },
-      { text: t('common.cancel'), style: 'cancel' },
+      ...(isCompanionShareAvailable()
+        ? [
+            {
+              // the camera then shoots with this look live
+              text: t('komorebi.send'),
+              onPress: () => {
+                try {
+                  if (publishLutToKomorebi(name, bakeLut(recipe, name))) notifySuccess();
+                } catch (e) {
+                  Alert.alert(t('common.error'), e instanceof Error ? e.message : String(e));
+                }
+              },
+            },
+          ]
+        : []),
+      { text: t('common.cancel'), style: 'cancel' as const },
     ]);
   };
 

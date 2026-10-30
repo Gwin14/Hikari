@@ -227,6 +227,8 @@ export function finishUniforms(r: Recipe, f: FrameInfo, x: FinishExtras): Unifor
     uVignette: [e.vignetteAmount / 100, e.vignetteMidpoint / 100, e.vignetteFeather / 100, e.vignetteRoundness / 100],
     uGrain: [e.grainAmount / 100, e.grainSize / 100, e.grainRoughness / 100],
     uGrainScale: Math.max(f.width, f.height) / 1800,
+    uBloom: [e.bloomAmount / 100, e.bloomThreshold / 100, e.bloomRadius / 100],
+    uHalation: [e.halationAmount / 100, e.halationThreshold / 100, e.halationRadius / 100],
     uClip: x.clip ? 1 : 0,
     uOutMode: x.outMode ?? 0,
     uOutP3: x.outP3 ? 1 : 0,

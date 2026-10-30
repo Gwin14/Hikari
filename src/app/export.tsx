@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { listFolders, listJson, newId, upsertJson } from '@/core/db/db';
 import { exportItems, type ExportProgress } from '@/core/export/exporter';
 import {
@@ -78,6 +79,14 @@ export default function ExportScreen() {
     if (res.errors.length) Alert.alert(t('common.error'), res.errors.join('\n'));
     else notifySuccess();
     router.back();
+    // closes the loop shoot → edit → see it in the camera's gallery
+    const fromCamera = items.length === 1 && items[0].kind === 'library' && handoffReturnUrl(items[0].id);
+    if (!res.errors.length && fromCamera) {
+      Alert.alert(t('komorebi.exportedTitle'), t('komorebi.exportedBody'), [
+        { text: t('komorebi.stay'), style: 'cancel' },
+        { text: t('komorebi.back'), onPress: () => returnToKomorebi(items[0].id) },
+      ]);
+    }
   };
 
   const savePreset = () => {

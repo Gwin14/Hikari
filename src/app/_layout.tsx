@@ -10,6 +10,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getDb } from '@/core/db/db';
 import { colors, radius } from '@/ui/theme';
 
+// Deep links (hikari://edit from Komorebi) keep the library below the editor.
+export const unstable_settings = { initialRouteName: '(tabs)' };
+
 export default function RootLayout() {
   useEffect(() => {
     getDb();

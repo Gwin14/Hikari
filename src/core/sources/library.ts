@@ -1,5 +1,5 @@
 import { isRawName } from 'hikari-native';
-import { Album, AssetField, MediaType, Query, type AssetMetadata } from 'expo-media-library';
+import { Album, Asset, AssetField, MediaType, Query, type AssetMetadata } from 'expo-media-library';
 import { Platform } from 'react-native';
 
 import { pairItems } from './pairing';
@@ -36,6 +36,47 @@ function toItem(m: AssetMetadata): PhotoItem {
     folderId: null,
     dirUri: null,
   };
+}
+
+/**
+ * Normalizes an asset id handed over by another app to this MediaLibrary's ids: on iOS
+ * they are `ph://<PHAsset local identifier>` (Asset() drops that prefix unconditionally),
+ * on Android content uris instead of the legacy MediaStore row numbers.
+ */
+export function libraryAssetId(id: string): string {
+  if (Platform.OS === 'ios') return id.startsWith('ph://') ? id : `ph://${id}`;
+  return /^\d+$/.test(id) ? libraryThumbUri(id) : id;
+}
+
+/** One library asset as a browsable item, or null if it no longer exists or isn't readable. */
+export async function libraryItem(id: string): Promise<PhotoItem | null> {
+  // Not getInfo(): it also resolves the file uri through a content-editing request, which
+  // fails for RAW pairs and photos carrying another app's edit (Komorebi's effects).
+  const asset = new Asset(libraryAssetId(id));
+  try {
+    const [mediaType, filename, width, height, creationTime] = await Promise.all([
+      asset.getMediaType(),
+      asset.getFilename(),
+      asset.getWidth(),
+      asset.getHeight(),
+      asset.getCreationTime(),
+    ]);
+    if (mediaType !== MediaType.IMAGE) return null;
+    return toItem({
+      id: asset.id,
+      filename,
+      mediaType,
+      width,
+      height,
+      creationTime,
+      modificationTime: null,
+      duration: null,
+      isFavorite: false,
+    });
+  } catch (e) {
+    console.warn('[hikari] library asset not readable', id, e);
+    return null;
+  }
 }
 
 export interface LibraryPage {

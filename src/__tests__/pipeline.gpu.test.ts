@@ -77,7 +77,7 @@ function render(r: Recipe, opts: { outMode?: number; maskTex?: Uint8Array } = {}
   }
   sh = programs.finish.effect.makeShaderWithChildren(
     packUniforms(programs.finish.layout, finishUniforms(r, frame, { crop: [0, 0, W, H], lutSize: 0, clip: false, outMode: opts.outMode ?? 0 })),
-    [sh, srcSh, srcSh, srcSh, srcSh],
+    [sh, srcSh, srcSh, srcSh, srcSh, srcSh],
   );
   const surface = CK.MakeSurface(W, H);
   const paint = new CK.Paint();
@@ -244,7 +244,7 @@ describe('LUT export (CanvasKit)', () => {
     const pass = (outMode: number) => {
       const sh = programs.finish.effect.makeShaderWithChildren(
         packUniforms(programs.finish.layout, finishUniforms(r, frame, { crop: [0, 0, w, n], lutSize: 0, clip: false, outMode })),
-        [dev, srcSh, srcSh, srcSh, srcSh],
+        [dev, srcSh, srcSh, srcSh, srcSh, srcSh],
       );
       const surface = CK.MakeSurface(w, n);
       const paint = new CK.Paint();
@@ -279,5 +279,20 @@ describe('LUT export (CanvasKit)', () => {
     const cube = bake(r);
     const mid = (4 * n * n + 4 * n + 4) * 3; // 50% grey
     expect(cube.data[mid]).toBeGreaterThan(0.6);
+  });
+});
+
+describe('light effects (CanvasKit)', () => {
+  it('bloom and halation brighten bright tones and are off by default', () => {
+    const r = base();
+    r.effects = { ...r.effects, bloomAmount: 80, bloomThreshold: 40, halationAmount: 80, halationThreshold: 40 };
+    const plain = render(base());
+    const lit = render(r);
+    const x = Math.floor(W * 0.8);
+    expect(px(lit, x, 2)[0]).toBeGreaterThan(px(plain, x, 2)[0]);
+    // halation is warm: red grows more than blue
+    expect(px(lit, x, 2)[0] - px(plain, x, 2)[0]).toBeGreaterThan(px(lit, x, 2)[2] - px(plain, x, 2)[2]);
+    // shadows stay put
+    expect(Math.abs(px(lit, 2, 2)[0] - px(plain, 2, 2)[0])).toBeLessThanOrEqual(2);
   });
 });
