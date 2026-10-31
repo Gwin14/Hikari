@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { PhotoItem } from '@/core/sources/types';
 import { useLibrary, type FilterId, type SortId, type ViewFilter } from '@/state/library';
 import { Chip, ChipRow, IconButton } from './kit';
-import { colors, font, radius, space } from './theme';
+import { colors, curve, font, radius, space } from './theme';
 
 /** Header shared by the Gallery and Folders browsers so both modes look the same. */
 export function BrowserHeader(props: { title: string; subtitle?: string; onTitlePress?: () => void; left?: ReactNode; right?: ReactNode }) {
@@ -19,7 +19,12 @@ export function BrowserHeader(props: { title: string; subtitle?: string; onTitle
   return (
     <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
       {props.left}
-      <Pressable style={{ flex: 1 }} onPress={props.onTitlePress} disabled={!props.onTitlePress}>
+      <Pressable
+        style={({ pressed }) => [{ flex: 1 }, pressed && { opacity: 0.6 }]}
+        onPress={props.onTitlePress}
+        disabled={!props.onTitlePress}
+        accessibilityRole={props.onTitlePress ? 'button' : 'header'}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={styles.title} numberOfLines={1}>
             {props.title}
@@ -103,7 +108,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
     backgroundColor: colors.bg,
   },
-  title: { color: colors.text, fontSize: 32, fontWeight: '800', letterSpacing: -0.8, flexShrink: 1 },
+  title: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: -0.6, flexShrink: 1 },
   titleChevron: {
     width: 22,
     height: 22,
@@ -113,7 +118,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 4,
   },
-  subtitle: { color: colors.textDim, fontSize: font.sm, fontWeight: '500', marginTop: 2 },
+  subtitle: { color: colors.textDim, fontSize: font.sm, fontWeight: '500', marginTop: 2, fontVariant: ['tabular-nums'] },
   selBar: {
     position: 'absolute',
     left: space.md,
@@ -124,10 +129,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm,
     paddingVertical: 6,
     borderRadius: radius.xl,
+    ...curve,
     overflow: 'hidden',
     backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.glass,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  selCount: { flex: 1, color: colors.text, fontSize: font.md, fontWeight: '600' },
+  selCount: { flex: 1, color: colors.text, fontSize: font.md, fontWeight: '600', fontVariant: ['tabular-nums'] },
 });

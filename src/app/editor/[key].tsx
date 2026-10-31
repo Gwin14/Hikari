@@ -6,10 +6,12 @@ import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from '
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { cachedThumb } from '@/core/thumbs';
 import { hasRaw, keyMatches } from '@/core/sources/types';
 import { prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
 import { useLibrary } from '@/state/library';
+import { usePrefBool } from '@/state/prefs';
 import { CurveEditor } from '@/ui/editor/CurveEditor';
 import { EditorCanvas } from '@/ui/editor/EditorCanvas';
 import { EditorMenu } from '@/ui/editor/EditorMenu';
@@ -32,8 +34,8 @@ import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
 import { RetouchPanel } from '@/ui/editor/panels/RetouchPanel';
 import { VersionsPanel } from '@/ui/editor/panels/VersionsPanel';
 import { ToolBar } from '@/ui/editor/ToolBar';
-import { Button, IconButton } from '@/ui/kit';
-import { colors, common, font, radius, space } from '@/ui/theme';
+import { Button, IconButton, tick } from '@/ui/kit';
+import { colors, common, curve, font, radius, space } from '@/ui/theme';
 
 export default function EditorScreen() {
   const { t } = useTranslation();
@@ -58,7 +60,8 @@ export default function EditorScreen() {
   const previewUri = item ? (thumb ?? item.thumbUri ?? cachedThumb(item)) : null;
   const { open, close, undo, redo, setTool, setCompare, auto } = useEditor.getState();
   const [sheet, setSheet] = useState<'menu' | 'copy' | 'info' | null>(null);
-  const [showHist, setShowHist] = useState(true);
+  const [histPref, setShowHist] = usePrefBool('showHistogram');
+  const showHist = histPref ?? true;
   const brush = useBrush();
 
   useEffect(() => {
@@ -74,13 +77,19 @@ export default function EditorScreen() {
     if (prev) prefetchPhoto(prev);
   }, [ready, index, sequence]);
 
+  // opened from Komorebi: a cold-started deep link has no gallery underneath
+  const fromKomorebi = item?.kind === 'library' && !!handoffReturnUrl(item.id);
+  const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
+
   const landscape = width > height;
   const panelHeight = landscape ? undefined : Math.round(height * 0.34);
   const showRaw = !!item && (hasRaw(item) || hasPair || !!recipe?.source.isRaw);
 
   const go = (d: number) => {
     const next = sequence[index + d];
-    if (next) router.setParams({ key: next.key });
+    if (!next) return;
+    tick();
+    router.setParams({ key: next.key });
   };
 
   const onTool = (id: ToolId) => {
@@ -132,7 +141,7 @@ export default function EditorScreen() {
   if (!item) {
     return (
       <View style={[common.screen, common.center]}>
-        <Button label={t('common.close')} onPress={() => router.back()} />
+        <Button label={t('common.close')} onPress={leave} />
       </View>
     );
   }
@@ -140,26 +149,35 @@ export default function EditorScreen() {
   return (
     <View style={[common.screen, { paddingTop: insets.top }]}>
       <View style={styles.top}>
-        <IconButton icon="chevron-back" size={26} onPress={() => router.back()} label={t('common.close')} />
-        <IconButton icon="arrow-undo" disabled={!past} onPress={undo} />
-        <IconButton icon="arrow-redo" disabled={!future} onPress={redo} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.name} numberOfLines={1}>
+        <IconButton icon="chevron-back" size={26} onPress={leave} label={t('common.close')} />
+        <IconButton icon="arrow-undo" disabled={!past} onPress={undo} label={t('editor.undo')} />
+        <IconButton icon="arrow-redo" disabled={!future} onPress={redo} label={t('editor.redo')} />
+        <View
+          style={styles.titleBlock}
+          accessible
+          accessibilityRole="adjustable"
+          accessibilityLabel={item.filename}
+          accessibilityValue={{ text: t('editor.position', { n: index + 1, total: sequence.length }) }}
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onAccessibilityAction={(e) => go(e.nativeEvent.actionName === 'increment' ? 1 : -1)}
+        >
+          <Text style={styles.name} numberOfLines={1} ellipsizeMode="middle">
             {item.filename}
-            {item.pair || hasPair ? ' · RAW+JPEG' : ''}
+          </Text>
+          <Text style={styles.position} numberOfLines={1}>
+            {sequence.length > 1 ? t('editor.position', { n: index + 1, total: sequence.length }) : ''}
+            {item.pair || hasPair ? `${sequence.length > 1 ? ' · ' : ''}RAW+JPEG` : ''}
           </Text>
         </View>
-        <IconButton icon="chevron-up" disabled={index <= 0} onPress={() => go(-1)} size={20} />
-        <IconButton icon="chevron-down" disabled={index >= sequence.length - 1} onPress={() => go(1)} size={20} />
+        {fromKomorebi && <IconButton icon="camera-outline" onPress={() => returnToKomorebi(item.id)} label={t('komorebi.back')} />}
         <IconButton icon="git-compare-outline" active={compare === 'split'} onPress={() => setCompare(compare === 'split' ? 'off' : 'split')} label={t('editor.split')} />
-        <IconButton icon="bar-chart-outline" active={showHist} onPress={() => setShowHist(!showHist)} label={t('editor.histogram')} />
-        <IconButton icon="ellipsis-horizontal-circle" onPress={() => setSheet('menu')} />
+        <IconButton icon="ellipsis-horizontal-circle" onPress={() => setSheet('menu')} label={t('editor.more')} />
         <IconButton icon="share-outline" active onPress={() => router.push({ pathname: '/export', params: { keys: item.key } })} label={t('export.title')} />
       </View>
 
       <View style={[styles.body, landscape && { flexDirection: 'row' }]}>
         <View style={{ flex: 1 }}>
-          <EditorCanvas brush={brush} />
+          <EditorCanvas brush={brush} onSwipe={go} />
           {!ready && previewUri && (
             // the grid thumbnail stands in (already in memory) while the full preview decodes
             <Animated.View style={[StyleSheet.absoluteFill, styles.preview]} exiting={FadeOut.duration(180)} pointerEvents="none">
@@ -191,14 +209,16 @@ export default function EditorScreen() {
       <View style={[styles.tools, { paddingBottom: insets.bottom }]}>
         <ToolBar value={tool} onChange={onTool} showRaw={showRaw} />
       </View>
-      <EditorMenu sheet={sheet} onSheet={setSheet} />
+      <EditorMenu sheet={sheet} onSheet={setSheet} histogram={showHist} onHistogram={setShowHist} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, height: 52 },
-  name: { color: colors.textDim, fontSize: font.xs, fontWeight: '600', textAlign: 'center', letterSpacing: 0.2 },
+  titleBlock: { flex: 1, alignItems: 'center', paddingHorizontal: space.xs },
+  name: { color: colors.text, fontSize: font.sm, fontWeight: '600', textAlign: 'center' },
+  position: { color: colors.textDim, fontSize: font.xs, fontWeight: '500', marginTop: 1, fontVariant: ['tabular-nums'] },
   body: { flex: 1 },
   preview: { backgroundColor: colors.bg },
   hist: { position: 'absolute', top: space.sm, left: space.sm },
@@ -206,6 +226,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
+    ...curve,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
@@ -222,6 +243,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: 8,
     borderRadius: radius.pill,
+    ...curve,
     backgroundColor: colors.glass,
   },
   loading: { color: colors.textDim, fontSize: font.xs },

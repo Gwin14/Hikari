@@ -114,6 +114,7 @@ class HikariNativeModule : Module() {
     }
 
     AsyncFunction("readLibraryAdjustment") { _: String -> null as String? }
+    AsyncFunction("readForeignAdjustment") { _: String, _: String -> null as String? }
 
     AsyncFunction("revertLibraryEdit") { _: String -> false }
 

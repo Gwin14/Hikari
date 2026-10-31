@@ -7,6 +7,7 @@ import { create } from 'zustand';
 
 import { autoTone, autoWhiteBalance, computeHistogram, type Histogram } from '@/core/auto/analysis';
 import { bakeCurveLut } from '@/core/color/curve';
+import { komorebiStartingLook } from '@/core/companion/komorebi';
 import { cubeToStrip, parseCube } from '@/core/color/cube';
 import * as db from '@/core/db/db';
 import { evictSource, hasSource, loadSource } from '@/core/image/load';
@@ -766,6 +767,11 @@ async function resolveRecipe(item: PhotoItem): Promise<{ recipe: Recipe; hasPair
       useRaw: isRaw || (hasPair && getBool('rawDefault', true)),
       isRaw,
     });
+    // a Komorebi capture starts from the look it was shot with (LUT and effects, all editable)
+    if (item.kind === 'library') {
+      const look = await komorebiStartingLook(item.id, recipe.source.useRaw || recipe.source.isRaw);
+      if (look) recipe = { ...recipe, lut: look.lut ?? recipe.lut, effects: { ...recipe.effects, ...look.effects } };
+    }
   }
   return { recipe, hasPair };
 }

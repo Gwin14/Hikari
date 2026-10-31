@@ -179,7 +179,7 @@ export function buildShader(inp: RenderInputs, r: Recipe, opts: RenderOptions = 
     outMode: opts.outMode,
     outP3: opts.outP3,
   });
-  return P.finish.effect.makeShaderWithChildren(packUniforms(P.finish.layout, fu), [sh, src, blurS, blurM, lutSh]);
+  return P.finish.effect.makeShaderWithChildren(packUniforms(P.finish.layout, fu), [sh, src, blurS, blurM, blurL, lutSh]);
 }
 
 /** Draws the developed, geometry-transformed photo with its output origin at (0,0). */

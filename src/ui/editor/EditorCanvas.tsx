@@ -6,6 +6,7 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
+  withSpring,
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
@@ -31,7 +32,10 @@ export interface BrushSettings {
  * GPU canvas. The picture is recorded on the UI thread from the live recipe, so slider
  * drags re-render without touching the JS thread.
  */
-export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
+const SNAP = { duration: 400, dampingRatio: 1 } as const;
+
+/** `onSwipe(1)` = next photo, `-1` = previous; fired by a horizontal swipe at fit zoom. */
+export function EditorCanvas({ brush, onSwipe }: { brush: SharedValue<BrushSettings>; onSwipe?: (dir: 1 | -1) => void }) {
   const tool = useEditor((s) => s.tool);
   const compare = useEditor((s) => s.compare);
   const showClipping = useEditor((s) => s.showClipping);
@@ -172,7 +176,11 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
       startPan.set({ x: panX.value, y: panY.value });
     })
     .onUpdate((e) => {
-      if (zoom.value <= 1.01 && compareMode.value !== 2) return;
+      if (zoom.value <= 1.01 && compareMode.value !== 2) {
+        // at fit zoom a horizontal drag pages between photos; the image follows with resistance
+        if (onSwipe && e.numberOfPointers === 1) panX.set(e.translationX * 0.5);
+        return;
+      }
       if (compareMode.value === 2 && zoom.value <= 1.01) {
         splitX.set(Math.max(0, Math.min(1, e.absoluteX / Math.max(1, vw.value))));
         return;
@@ -180,6 +188,13 @@ export function EditorCanvas({ brush }: { brush: SharedValue<BrushSettings> }) {
       panX.set(startPan.value.x + e.translationX);
       panY.set(startPan.value.y + e.translationY);
       clampPan();
+    })
+    .onEnd((e) => {
+      if (!onSwipe || zoom.value > 1.01 || compareMode.value === 2) return;
+      const horizontal = Math.abs(e.translationX) > Math.abs(e.translationY) * 1.5;
+      const commit = horizontal && (Math.abs(e.translationX) > vw.value * 0.25 || Math.abs(e.velocityX) > 700);
+      panX.set(withSpring(0, { ...SNAP, velocity: e.velocityX * 0.5 }));
+      if (commit) scheduleOnRN(onSwipe, e.translationX < 0 ? 1 : -1);
     });
 
   const doubleTap = Gesture.Tap()

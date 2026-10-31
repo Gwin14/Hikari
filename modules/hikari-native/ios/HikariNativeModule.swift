@@ -89,6 +89,10 @@ public class HikariNativeModule: Module {
       await Library.readAdjustment(assetId: assetId)
     }
 
+    AsyncFunction("readForeignAdjustment") { (assetId: String, format: String) -> String? in
+      await Library.readForeignAdjustment(assetId: assetId, format: format)
+    }
+
     AsyncFunction("revertLibraryEdit") { (assetId: String) -> Bool in
       try await Library.revert(assetId: assetId)
     }

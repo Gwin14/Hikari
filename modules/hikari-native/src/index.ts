@@ -118,6 +118,7 @@ interface HikariNativeSpec {
   exportAssetResource(assetId: string, kind: 'raw' | 'photo'): Promise<string>;
   saveEditToLibrary(assetId: string, renderedPath: string, adjustmentJson: string, formatVersion: string): Promise<boolean>;
   readLibraryAdjustment(assetId: string): Promise<string | null>;
+  readForeignAdjustment(assetId: string, format: string): Promise<string | null>;
   revertLibraryEdit(assetId: string): Promise<boolean>;
   pickFolder(): Promise<FolderGrant | null>;
   resolveBookmark(bookmark: string): Promise<{ uri: string; stale: boolean } | null>;
@@ -148,6 +149,9 @@ export const saveEditToLibrary = (assetId: string, renderedPath: string, json: s
   native().saveEditToLibrary(assetId, renderedPath, json, version);
 export const readLibraryAdjustment = (assetId: string) =>
   Native ? Native.readLibraryAdjustment(assetId) : Promise.resolve(null);
+/** Adjustment data written by another app (iOS PhotoKit), when its format matches. */
+export const readForeignAdjustment = (assetId: string, format: string) =>
+  Native?.readForeignAdjustment ? Native.readForeignAdjustment(assetId, format) : Promise.resolve(null);
 export const revertLibraryEdit = (assetId: string) => native().revertLibraryEdit(assetId);
 export const pickFolder = () => native().pickFolder();
 export const resolveBookmark = (bookmark: string) => native().resolveBookmark(bookmark);

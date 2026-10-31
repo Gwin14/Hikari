@@ -24,7 +24,12 @@ export const colors = {
 } as const;
 
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
+/** Shape rule: actions and chips are pills, inputs md, cards lg, sheets/panels xl. Always with `curve`. */
 export const radius = { sm: 8, md: 12, lg: 18, xl: 24, pill: 999 } as const;
+/** iOS squircle corners for every rounded rectangle. */
+export const curve = { borderCurve: 'continuous' } as const;
+/** The single elevation step: a control raised above its track (segmented thumb). */
+export const raised = '0 1px 4px rgba(0,0,0,0.3)';
 export const font = {
   xs: 11,
   sm: 13,

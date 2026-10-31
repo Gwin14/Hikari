@@ -10,13 +10,22 @@
     "backgroundColor": "#0B0B0C",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.hikari.editor",
+      "bundleIdentifier": "app.hikari.editor.fabiosantos",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Hikari precisa acessar sua fototeca para editar suas fotos.",
         "NSPhotoLibraryAddUsageDescription": "Hikari salva suas fotos editadas na fototeca.",
         "UISupportsDocumentBrowser": true,
-        "LSSupportsOpeningDocumentsInPlace": true
-      }
+        "LSSupportsOpeningDocumentsInPlace": true,
+        "LSApplicationQueriesSchemes": [
+          "komorebi"
+        ]
+      },
+      "entitlements": {
+        "com.apple.security.application-groups": [
+          "group.br.dev.fabiosantos.komorebi.camera"
+        ]
+      },
+      "appleTeamId": "77MXYLFJ7J"
     },
     "android": {
       "package": "app.hikari.editor",

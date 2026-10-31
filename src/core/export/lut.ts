@@ -44,6 +44,7 @@ export function bakeLut(recipe: Recipe, title: string, n = LUT_EXPORT_SIZE): str
     curve: makeRgbaImage(bakeCurveLut(r.curves), 256, 1),
     lut: lutFor(r.lut.id),
     maskTextures: {},
+    retouch: [],
     gpuKey: nextGpuKey(),
   };
   const pass = (outMode: 2 | 3) => {

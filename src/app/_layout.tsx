@@ -8,7 +8,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { getDb } from '@/core/db/db';
-import { colors } from '@/ui/theme';
+import { colors, radius } from '@/ui/theme';
+
+// Deep links (hikari://edit from Komorebi) keep the library below the editor.
+export const unstable_settings = { initialRouteName: '(tabs)' };
 
 export default function RootLayout() {
   useEffect(() => {
@@ -31,6 +34,16 @@ export default function RootLayout() {
           <Stack.Screen name="folder/[id]" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="export" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
           <Stack.Screen name="batch" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+          <Stack.Screen
+            name="albums"
+            options={{
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.5, 1],
+              sheetGrabberVisible: true,
+              sheetCornerRadius: radius.xl,
+              contentStyle: { backgroundColor: colors.surface },
+            }}
+          />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

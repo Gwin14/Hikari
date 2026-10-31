@@ -2,9 +2,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { isNativeAvailable, type ExportColorSpace, type ExportFormat, type MetadataPolicy } from 'hikari-native';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { listFolders, listJson, newId, upsertJson } from '@/core/db/db';
 import { exportItems, type ExportProgress } from '@/core/export/exporter';
 import {
@@ -23,9 +24,9 @@ import { geometryMatrix } from '@/core/pipeline/geometry';
 import { recipeFor } from '@/core/export/exporter';
 import { prefs } from '@/state/prefs';
 import { findItems } from '@/state/library';
-import { Button, Chip, ChipRow, IconButton, SectionTitle, Segmented, ToggleRow } from '@/ui/kit';
+import { Button, Chip, ChipRow, Field, IconButton, notifySuccess, ProgressBar, SectionTitle, Segmented, ToggleRow } from '@/ui/kit';
 import { Slider } from '@/ui/Slider';
-import { colors, common, font, radius, space } from '@/ui/theme';
+import { colors, common, curve, font, radius, space } from '@/ui/theme';
 
 const LAST_KEY = 'export.last';
 
@@ -76,7 +77,16 @@ export default function ExportScreen() {
     setProgress({ done: 0, total: items.length, current: '', errors: [] });
     const res = await exportItems(items, o, setProgress);
     if (res.errors.length) Alert.alert(t('common.error'), res.errors.join('\n'));
+    else notifySuccess();
     router.back();
+    // closes the loop shoot → edit → see it in the camera's gallery
+    const fromCamera = items.length === 1 && items[0].kind === 'library' && handoffReturnUrl(items[0].id);
+    if (!res.errors.length && fromCamera) {
+      Alert.alert(t('komorebi.exportedTitle'), t('komorebi.exportedBody'), [
+        { text: t('komorebi.stay'), style: 'cancel' },
+        { text: t('komorebi.back'), onPress: () => returnToKomorebi(items[0].id) },
+      ]);
+    }
   };
 
   const savePreset = () => {
@@ -92,10 +102,12 @@ export default function ExportScreen() {
 
   if (progress) {
     return (
-      <View style={[common.screen, common.center]}>
-        <ActivityIndicator color={colors.accent} size="large" />
-        <Text style={[common.text, { marginTop: space.lg }]}>{t('export.exporting', { done: progress.done, total: progress.total })}</Text>
-        <Text style={styles.dim}>{progress.current}</Text>
+      <View style={[common.screen, common.center, styles.progress]}>
+        <Text style={[common.text, styles.progressText]}>{t('export.exporting', { done: progress.done, total: progress.total })}</Text>
+        <ProgressBar value={progress.total ? progress.done / progress.total : 0} />
+        <Text style={styles.dim} numberOfLines={1}>
+          {progress.current}
+        </Text>
       </View>
     );
   }
@@ -112,11 +124,11 @@ export default function ExportScreen() {
   return (
     <View style={[common.screen, { paddingTop: Platform.OS === 'android' ? insets.top : space.md }]}>
       <View style={styles.header}>
-        <IconButton icon="close" onPress={() => router.back()} />
+        <IconButton icon="close" onPress={() => router.back()} label={t('common.close')} />
         <Text style={styles.title}>{items.length > 1 ? t('export.count', { count: items.length }) : t('export.one')}</Text>
         <IconButton icon="bookmark-outline" onPress={savePreset} label={t('export.savePreset')} />
       </View>
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
+      <ScrollView keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
         {presets.length > 0 && (
           <>
             <SectionTitle title={t('export.presets')} />
@@ -180,7 +192,8 @@ export default function ExportScreen() {
             {o.sizeMode !== 'original' && (
               <View style={[styles.pad, common.row, { gap: space.md }]}>
                 <TextInput
-                  keyboardType="numeric"
+                  keyboardType="number-pad"
+                  selectionColor={colors.accent}
                   value={String(o.sizeValue)}
                   onChangeText={(v) => set({ sizeValue: Number(v.replace(/[^\d.]/g, '')) || 0 })}
                   style={styles.input}
@@ -233,9 +246,9 @@ export default function ExportScreen() {
             <Chip key={v} label={l} active={o.metadata === v} onPress={() => set({ metadata: v })} />
           ))}
         </ChipRow>
-        <View style={[styles.pad, { gap: space.sm }]}>
-          <TextInput placeholder={t('export.artist')} placeholderTextColor={colors.textFaint} value={o.artist} onChangeText={(v) => set({ artist: v })} style={styles.input} />
-          <TextInput placeholder={t('export.copyright')} placeholderTextColor={colors.textFaint} value={o.copyright} onChangeText={(v) => set({ copyright: v })} style={styles.input} />
+        <View style={[styles.pad, { gap: space.md }]}>
+          <Field label={t('export.artist')} value={o.artist} onChangeText={(v) => set({ artist: v })} textContentType="name" autoCapitalize="words" />
+          <Field label={t('export.copyright')} value={o.copyright} onChangeText={(v) => set({ copyright: v })} />
         </View>
 
         {!inPlace && (
@@ -244,13 +257,7 @@ export default function ExportScreen() {
             {o.watermark.enabled && (
               <>
                 <View style={styles.pad}>
-                  <TextInput
-                    placeholder={t('export.watermarkText')}
-                    placeholderTextColor={colors.textFaint}
-                    value={o.watermark.text}
-                    onChangeText={(v) => set({ watermark: { ...o.watermark, text: v } })}
-                    style={styles.input}
-                  />
+                  <Field label={t('export.watermarkText')} value={o.watermark.text} onChangeText={(v) => set({ watermark: { ...o.watermark, text: v } })} />
                 </View>
                 <ChipRow>
                   {(['tl', 'tr', 'center', 'bl', 'br'] as WatermarkPosition[]).map((p) => (
@@ -309,10 +316,13 @@ const styles = StyleSheet.create({
   title: { flex: 1, color: colors.text, fontSize: font.lg, fontWeight: '700', textAlign: 'center' },
   pad: { paddingHorizontal: space.lg, paddingVertical: space.sm },
   dim: { color: colors.textDim, fontSize: font.xs, marginTop: 6 },
+  progress: { paddingHorizontal: space.xl * 2, gap: space.md },
+  progressText: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   input: {
     backgroundColor: colors.surface2,
     color: colors.text,
     borderRadius: radius.md,
+    ...curve,
     paddingHorizontal: space.md,
     paddingVertical: 10,
     fontSize: font.md,

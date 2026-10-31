@@ -1,16 +1,46 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import type { ComponentProps, ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useEffect, type ComponentProps, type ReactNode } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { getBool } from '@/state/prefs';
-import { colors, font, radius, space } from './theme';
+import { colors, common, curve, font, radius, raised, space } from './theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
 
 export const tick = () => {
   if (getBool('haptics', true)) Haptics.selectionAsync();
 };
+
+/** Outcome haptic (export/batch finished), paired with the visual change. */
+export const notifySuccess = () => {
+  if (getBool('haptics', true)) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+};
+
+const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** Pressable that settles to 0.97 on press-in: the press feedback for buttons and cards. */
+export function PressableScale(props: Omit<ComponentProps<typeof Pressable>, 'style'> & { style?: StyleProp<ViewStyle> }) {
+  const { style, onPressIn, onPressOut, ...rest } = props;
+  const scale = useSharedValue(1);
+  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
+  return (
+    <AnimatedPressable
+      {...rest}
+      onPressIn={(e) => {
+        scale.set(withTiming(0.97, { duration: 110, easing: EASE_OUT }));
+        onPressIn?.(e);
+      }}
+      onPressOut={(e) => {
+        scale.set(withTiming(1, { duration: 160, easing: EASE_OUT }));
+        onPressOut?.(e);
+      }}
+      style={[style, animated]}
+    />
+  );
+}
 
 export function IconButton(props: {
   icon: IconName;
@@ -104,9 +134,10 @@ export function SectionTitle({ title, right }: { title: string; right?: ReactNod
   );
 }
 
-export function ToggleRow(props: { label: string; value: boolean; onChange(v: boolean): void; hint?: string }) {
+export function ToggleRow(props: { label: string; value: boolean; onChange(v: boolean): void; hint?: string; icon?: IconName }) {
   return (
     <View style={styles.row}>
+      {props.icon && <Ionicons name={props.icon} size={20} color={colors.textDim} style={{ marginRight: space.md }} />}
       <View style={{ flex: 1 }}>
         <Text style={styles.rowLabel}>{props.label}</Text>
         {props.hint ? <Text style={styles.rowHint}>{props.hint}</Text> : null}
@@ -128,14 +159,22 @@ export function ListRow(props: {
   onPress?: () => void;
   destructive?: boolean;
   chevron?: boolean;
+  /** Checkmark for single-choice lists (language, album). */
+  selected?: boolean;
 }) {
   return (
-    <Pressable onPress={props.onPress} style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surface2 }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={props.selected === undefined ? undefined : { selected: props.selected }}
+      onPress={props.onPress}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surface2 }]}
+    >
       {props.icon && (
         <Ionicons name={props.icon} size={20} color={props.destructive ? colors.danger : colors.textDim} style={{ marginRight: space.md }} />
       )}
       <Text style={[styles.rowLabel, { flex: 1 }, props.destructive && { color: colors.danger }]}>{props.label}</Text>
       {props.value ? <Text style={styles.rowValue}>{props.value}</Text> : null}
+      {props.selected ? <Ionicons name="checkmark" size={20} color={colors.accent} /> : null}
       {props.chevron !== false && props.onPress ? <Ionicons name="chevron-forward" size={16} color={colors.textFaint} /> : null}
     </Pressable>
   );
@@ -143,19 +182,18 @@ export function ListRow(props: {
 
 export function Button(props: { label: string; onPress(): void; primary?: boolean; icon?: IconName; disabled?: boolean; style?: StyleProp<ViewStyle> }) {
   return (
-    <Pressable
+    <PressableScale
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!props.disabled }}
       disabled={props.disabled}
       onPress={props.onPress}
-      style={({ pressed }) => [
-        styles.button,
-        props.primary && styles.buttonPrimary,
-        (pressed || props.disabled) && { opacity: 0.6 },
-        props.style,
-      ]}
+      style={[styles.button, props.primary && styles.buttonPrimary, props.disabled && { opacity: 0.4 }, props.style]}
     >
       {props.icon && <Ionicons name={props.icon} size={18} color={props.primary ? colors.bg : colors.text} />}
-      <Text style={[styles.buttonText, props.primary && { color: colors.bg }]}>{props.label}</Text>
-    </Pressable>
+      <Text style={[styles.buttonText, props.primary && { color: colors.bg }]} numberOfLines={1}>
+        {props.label}
+      </Text>
+    </PressableScale>
   );
 }
 
@@ -163,11 +201,51 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
+/** Labelled text field: the label sits above, never inside as a placeholder. */
+export function Field({ label, style, ...input }: TextInputProps & { label: string }) {
+  return (
+    <View style={[styles.field, style]}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput placeholderTextColor={colors.textFaint} selectionColor={colors.accent} {...input} style={styles.input} />
+    </View>
+  );
+}
+
+/** Composed empty / error / permission state: icon, title, one line of guidance, optional action. */
+export function EmptyState(props: { icon: IconName; title: string; body?: string; action?: ReactNode; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[styles.empty, props.style]}>
+      <View style={styles.emptyIcon}>
+        <Ionicons name={props.icon} size={30} color={colors.textDim} />
+      </View>
+      <Text style={styles.emptyTitle}>{props.title}</Text>
+      {props.body ? <Text style={styles.emptyBody}>{props.body}</Text> : null}
+      {props.action ? <View style={{ marginTop: space.sm }}>{props.action}</View> : null}
+    </View>
+  );
+}
+
+/** Determinate progress (export, batch). Animates scaleX only. */
+export function ProgressBar({ value }: { value: number }) {
+  const reduceMotion = useReducedMotion();
+  const p = useSharedValue(0);
+  useEffect(() => {
+    const v = Math.max(0, Math.min(1, value));
+    p.set(reduceMotion ? v : withTiming(v, { duration: 250, easing: EASE_OUT }));
+  }, [value, p, reduceMotion]);
+  const fill = useAnimatedStyle(() => ({ transform: [{ scaleX: p.get() }] }));
+  return (
+    <View style={styles.track} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100) }}>
+      <Animated.View style={[styles.trackFill, fill]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   iconBtn: { padding: 6, alignItems: 'center', justifyContent: 'center' },
-  segmented: { flexDirection: 'row', backgroundColor: colors.surface2, borderRadius: radius.md, padding: 2 },
-  segment: { flex: 1, paddingVertical: 7, alignItems: 'center', borderRadius: radius.md - 2 },
-  segmentOn: { backgroundColor: colors.surface3, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
+  segmented: { flexDirection: 'row', backgroundColor: colors.surface2, borderRadius: radius.md, padding: 2, ...curve },
+  segment: { flex: 1, minHeight: 32, justifyContent: 'center', alignItems: 'center', borderRadius: radius.md - 2, ...curve },
+  segmentOn: { backgroundColor: colors.surface3, boxShadow: raised },
   segmentText: { color: colors.textDim, fontSize: font.sm, fontWeight: '500' },
   segmentTextOn: { color: colors.text },
   chip: {
@@ -211,6 +289,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 14,
     paddingHorizontal: 22,
+    minHeight: 50,
     borderRadius: radius.pill,
     backgroundColor: colors.surface2,
   },
@@ -219,8 +298,35 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
+    ...curve,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
+  field: { gap: 6 },
+  fieldLabel: common.label,
+  input: {
+    backgroundColor: colors.surface2,
+    color: colors.text,
+    borderRadius: radius.md,
+    ...curve,
+    paddingHorizontal: space.md,
+    paddingVertical: 12,
+    fontSize: font.md,
+  },
+  empty: { alignItems: 'center', paddingHorizontal: space.xl, gap: space.sm },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: radius.lg,
+    ...curve,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: space.sm,
+  },
+  emptyTitle: { color: colors.text, fontSize: font.lg, fontWeight: '700', textAlign: 'center' },
+  emptyBody: { color: colors.textDim, fontSize: font.md, lineHeight: 21, textAlign: 'center', maxWidth: 320 },
+  track: { height: 4, borderRadius: 2, backgroundColor: colors.surface3, overflow: 'hidden', alignSelf: 'stretch' },
+  trackFill: { ...StyleSheet.absoluteFill, backgroundColor: colors.accent, transformOrigin: 'left' },
 });

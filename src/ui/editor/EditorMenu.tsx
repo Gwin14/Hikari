@@ -9,7 +9,7 @@ import { decodeTarget } from '@/core/image/load';
 import type { RecipeSection } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
 import { useLibrary } from '@/state/library';
-import { Button, ListRow, SectionTitle } from '../kit';
+import { Button, ListRow, SectionTitle, ToggleRow } from '../kit';
 import { colors, font, radius, space } from '../theme';
 import { SectionPicker } from './panels/PresetsPanel';
 
@@ -18,7 +18,8 @@ type Sheet = 'menu' | 'copy' | 'info' | null;
 const COPY_DEFAULT: RecipeSection[] = ['profile', 'light', 'color', 'curves', 'hsl', 'grading', 'detail', 'lens', 'effects', 'lut'];
 
 /** "More" menu: copy/paste, versions, rating, info, reset/revert. */
-export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet): void }) {
+export function EditorMenu(props: { sheet: Sheet; onSheet(s: Sheet): void; histogram: boolean; onHistogram(v: boolean): void }) {
+  const { sheet, onSheet } = props;
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const item = useEditor((s) => s.item);
@@ -112,6 +113,7 @@ export function EditorMenu({ sheet, onSheet }: { sheet: Sheet; onSheet(s: Sheet)
               }}
             />
             <ListRow icon="information-circle-outline" label={t('editor.info')} onPress={() => onSheet('info')} />
+            <ToggleRow icon="bar-chart-outline" label={t('editor.histogram')} value={props.histogram} onChange={props.onHistogram} />
             <ListRow
               icon="refresh-outline"
               label={t('editor.resetAll')}

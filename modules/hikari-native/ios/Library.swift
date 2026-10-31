@@ -92,6 +92,20 @@ enum Library {
     return String(data: adj.data, encoding: .utf8)
   }
 
+  /// Adjustment data another app left on the asset (e.g. Komorebi's "app.komorebi.effects"
+  /// recipe), without claiming it as ours. Only the data is read, never the rendition.
+  static func readForeignAdjustment(assetId: String, format: String) async -> String? {
+    guard let a = asset(assetId) else { return nil }
+    let input: PHContentEditingInput? = await withCheckedContinuation { cont in
+      let opts = PHContentEditingInputRequestOptions()
+      opts.isNetworkAccessAllowed = true
+      opts.canHandleAdjustmentData = { $0.formatIdentifier == format }
+      a.requestContentEditingInput(with: opts) { input, _ in cont.resume(returning: input) }
+    }
+    guard let adj = input?.adjustmentData, adj.formatIdentifier == format else { return nil }
+    return String(data: adj.data, encoding: .utf8)
+  }
+
   static func revert(assetId: String) async throws -> Bool {
     guard let a = asset(assetId) else { throw HikariError("Asset not found") }
     try await PHPhotoLibrary.shared().performChanges {

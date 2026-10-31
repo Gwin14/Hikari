@@ -1,15 +1,15 @@
 import Constants from 'expo-constants';
 import { isNativeAvailable } from 'hikari-native';
 import { useTranslation } from 'react-i18next';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { clearThumbRefs } from '@/core/db/db';
 import { clearThumbCaches } from '@/core/thumbs';
 import { LANGUAGES, setLanguage } from '@/i18n';
 import { prefs, usePrefBool, usePrefString, type PreviewQuality } from '@/state/prefs';
 import { BrowserHeader } from '@/ui/BrowserChrome';
-import { Card, ListRow, SectionTitle, Segmented, ToggleRow } from '@/ui/kit';
-import { colors, common, font, radius, space } from '@/ui/theme';
+import { Card, Field, ListRow, SectionTitle, Segmented, ToggleRow } from '@/ui/kit';
+import { colors, common, font, space } from '@/ui/theme';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -24,7 +24,7 @@ export default function SettingsScreen() {
   return (
     <View style={common.screen}>
       <BrowserHeader title={t('settings.title')} />
-      <ScrollView contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: 120 }}>
+      <ScrollView keyboardDismissMode="interactive" contentContainerStyle={{ padding: space.lg, gap: space.md, paddingBottom: 120 }}>
         {!isNativeAvailable && (
           <Card style={{ padding: space.md }}>
             <Text style={{ color: colors.accent, fontSize: font.sm }}>{t('settings.nativeMissing')}</Text>
@@ -36,7 +36,7 @@ export default function SettingsScreen() {
             <ListRow
               key={l.code}
               label={l.label ?? t('settings.system')}
-              value={(language ?? 'system') === l.code ? '✓' : ''}
+              selected={(language ?? 'system') === l.code}
               chevron={false}
               onPress={() => setLanguage(l.code)}
             />
@@ -63,21 +63,17 @@ export default function SettingsScreen() {
         </Card>
 
         <SectionTitle title={t('export.metadata')} />
-        <Card style={{ padding: space.md, gap: space.sm }}>
-          <TextInput
-            placeholder={t('settings.defaultArtist')}
-            placeholderTextColor={colors.textFaint}
-            value={artist ?? ''}
+        <Card style={{ padding: space.lg, gap: space.md }}>
+          <Field
+            label={t('settings.defaultArtist')}
+            defaultValue={artist ?? ''}
             onChangeText={setArtist}
-            style={styles.input}
+            textContentType="name"
+            autoComplete="name"
+            autoCapitalize="words"
+            returnKeyType="next"
           />
-          <TextInput
-            placeholder={t('settings.defaultCopyright')}
-            placeholderTextColor={colors.textFaint}
-            value={copyright ?? ''}
-            onChangeText={setCopyright}
-            style={styles.input}
-          />
+          <Field label={t('settings.defaultCopyright')} defaultValue={copyright ?? ''} onChangeText={setCopyright} placeholder="© 2026" />
         </Card>
 
         <Card>
@@ -99,6 +95,5 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  input: { backgroundColor: colors.surface2, color: colors.text, borderRadius: radius.md, padding: space.md, fontSize: font.md },
   version: { color: colors.textFaint, fontSize: font.xs, textAlign: 'center', marginTop: space.lg },
 });
