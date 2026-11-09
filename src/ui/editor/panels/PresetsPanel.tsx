@@ -1,7 +1,8 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { useMemo, useRef, useState } from 'react';
+import { Image } from 'expo-image';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -16,6 +17,30 @@ import { Button, Chip, ChipRow, notifySuccess, SectionTitle } from '../../kit';
 import { Slider } from '../../Slider';
 import { colors, font, radius, space } from '../../theme';
 
+/** Preset id → preview file. Rendered one per tick so the panel stays responsive while they fill in. */
+function usePresetThumbs(presets: Preset[], base: Recipe) {
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  // null until the photo has loaded; changes when removals rebuild the source
+  const gpuKey = useEditor((s) => s.inputs?.gpuKey ?? null);
+
+  useEffect(() => {
+    if (!gpuKey) return;
+    const queue = [...presets];
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      const p = queue.shift();
+      if (!p) return;
+      const uri = useEditor.getState().presetThumb(p.settings, base);
+      if (uri) setThumbs((cur) => (cur[p.id] === uri ? cur : { ...cur, [p.id]: uri }));
+      timer = setTimeout(next, 0);
+    };
+    timer = setTimeout(next, 0);
+    return () => clearTimeout(timer);
+  }, [presets, base, gpuKey]);
+
+  return thumbs;
+}
+
 export function PresetsPanel({ recipe }: { recipe: Recipe }) {
   const { t } = useTranslation();
   const [version, setVersion] = useState(0);
@@ -24,7 +49,9 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
   const [amount, setAmount] = useState(100);
   const [saving, setSaving] = useState(false);
   // Recipe before the first preset was tried, so switching presets doesn't stack them.
-  const base = useRef<Recipe | null>(null);
+  const [tried, setTried] = useState<Recipe | null>(null);
+  const base = tried ?? recipe;
+  const thumbs = usePresetThumbs(presets, base);
   const { applyPreset } = useEditor.getState();
 
   const groups = useMemo(() => {
@@ -34,8 +61,8 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
   }, [presets]);
 
   const apply = (p: Preset, a: number) => {
-    if (!base.current) base.current = recipe;
-    applyPreset(p.settings, a / 100, base.current);
+    setTried(base);
+    applyPreset(p.settings, a / 100, base);
   };
 
   const importPreset = async () => {
@@ -156,8 +183,14 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
                   apply(p, 100);
                 }}
                 onLongPress={() => manage(p)}
-                style={[styles.preset, selected?.id === p.id && styles.presetOn]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: selected?.id === p.id }}
+                style={styles.preset}
               >
+                <View style={styles.presetThumb}>
+                  {thumbs[p.id] && <Image source={{ uri: thumbs[p.id] }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />}
+                  {selected?.id === p.id && <View style={styles.presetOn} />}
+                </View>
                 <Text style={styles.presetText} numberOfLines={2}>
                   {p.name}
                 </Text>
@@ -231,15 +264,9 @@ function SavePresetModal(p: { visible: boolean; onClose(): void; onSave(name: st
 
 const styles = StyleSheet.create({
   row: { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.xs },
-  preset: {
-    width: 92,
-    height: 56,
-    borderRadius: radius.tile,
-    backgroundColor: colors.surface2,
-    padding: space.sm,
-    justifyContent: 'flex-end',
-  },
-  presetOn: { borderWidth: 1.5, borderColor: colors.accent },
+  preset: { width: 84, gap: space.xs },
+  presetThumb: { width: 84, height: 84, borderRadius: radius.tile, overflow: 'hidden', backgroundColor: colors.surface2 },
+  presetOn: { ...StyleSheet.absoluteFill, borderRadius: radius.tile, borderWidth: 2, borderColor: colors.accent },
   presetText: { color: colors.text, fontSize: font.xs, fontWeight: '600' },
   sections: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: space.xl },

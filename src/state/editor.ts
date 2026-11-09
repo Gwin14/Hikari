@@ -185,6 +185,8 @@ interface EditorState {
   shareDraft(): void;
   /** The photo was just reverted in Photos, so the reset recipe is what's stored now. */
   markReverted(): void;
+  /** Cached file showing this photo with a preset applied onto `base`; the open recipe is untouched. */
+  presetThumb(settings: Partial<RecipeSettings>, base: Recipe): string | null;
   /** Save the current settings as a new named version. */
   createVersion(name: string): void;
   /** Load a version's settings as one (undoable) history step. */
@@ -687,6 +689,8 @@ export const useEditor = create<EditorState>((set, get) => {
       const long = Math.max(inputs.frame.width, inputs.frame.height);
       return renderToImage(inputs, recipe, Math.min(1, maxDim / long));
     },
+
+    presetThumb: (settings, base) => lookThumb(applySettings(base, settings)),
 
     async save() {
       const { item, recipe, versions, saving } = get();
