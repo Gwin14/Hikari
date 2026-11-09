@@ -67,9 +67,9 @@ export function isEdited(recipe: Recipe): boolean {
 }
 
 /** Stable short hash of the render-affecting settings (thumbnail cache key). */
-export function recipeHash(recipe: Recipe): string {
+export function recipeHash(recipe: Recipe, salt = ''): string {
   const r = recipe as unknown as Record<string, unknown>;
-  const str = JSON.stringify(RECIPE_SECTIONS.map((s) => r[s])) + recipe.source.useRaw;
+  const str = JSON.stringify(RECIPE_SECTIONS.map((s) => r[s])) + recipe.source.useRaw + salt;
   let h1 = 0x811c9dc5;
   let h2 = 0x1234567;
   for (let i = 0; i < str.length; i++) {

@@ -22,7 +22,6 @@ export default function SettingsScreen() {
   const [quality, setQuality] = usePrefString('previewQuality');
   const [haptics, setHaptics] = usePrefBool('haptics');
   const [rawDefault, setRawDefault] = usePrefBool('rawDefault');
-  const [sidecars, setSidecars] = usePrefBool('writeSidecars');
   const [artist, setArtist] = usePrefString('defaultArtist');
   const [copyright, setCopyright] = usePrefString('defaultCopyright');
 
@@ -84,7 +83,6 @@ export default function SettingsScreen() {
           />
         </View>
         <ToggleRow icon="raw" label={t('settings.rawDefault')} value={rawDefault ?? true} onChange={setRawDefault} />
-        <ToggleRow icon="sidecar" label={t('settings.writeSidecars')} value={sidecars ?? true} onChange={setSidecars} />
         <ToggleRow icon="haptics" label={t('settings.haptics')} value={haptics ?? true} onChange={setHaptics} />
       </Group>
 

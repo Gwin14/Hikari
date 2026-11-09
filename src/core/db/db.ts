@@ -146,15 +146,11 @@ function ensureRow(key: string, kind: string, uri: string, filename: string, fol
   );
 }
 
-export function saveRecipe(key: string, recipe: Recipe, edited: boolean, hash: string, folderId: string | null) {
+/** The edit was saved with the photo: only what the grid shows stays in the catalog. */
+export function markEditSaved(key: string, recipe: Recipe, edited: boolean, hash: string, folderId: string | null) {
   ensureRow(key, recipe.source.kind, recipe.source.uri, recipe.source.filename, folderId);
-  getDb().runSync('UPDATE photos SET recipe = ?, edited = ?, recipe_hash = ?, updated_at = ? WHERE key = ?', [
-    JSON.stringify(recipe),
-    edited ? 1 : 0,
-    hash,
-    Date.now(),
-    key,
-  ]);
+  getDb().runSync('UPDATE photos SET recipe = NULL, edited = ?, recipe_hash = ?, updated_at = ? WHERE key = ?', [edited ? 1 : 0, hash, Date.now(), key]);
+  getDb().runSync('DELETE FROM snapshots WHERE photo_key = ?', [key]);
 }
 
 export function setThumb(key: string, thumb: string | null) {
@@ -207,40 +203,6 @@ export function listVersions(photoKey: string): PhotoVersion[] {
       }
       return recipe ? [{ id: r.id, name: r.name, recipe, thumb: r.thumb, createdAt: r.created_at }] : [];
     });
-}
-
-export function addVersion(photoKey: string, v: PhotoVersion) {
-  getDb().runSync('INSERT INTO snapshots (id, photo_key, name, recipe, thumb, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
-    v.id,
-    photoKey,
-    v.name,
-    JSON.stringify(v.recipe),
-    v.thumb,
-    v.createdAt,
-  ]);
-}
-
-export function updateVersion(id: string, patch: Partial<Pick<PhotoVersion, 'name' | 'recipe' | 'thumb'>>) {
-  const sets: string[] = [];
-  const vals: (string | null)[] = [];
-  if (patch.name !== undefined) {
-    sets.push('name = ?');
-    vals.push(patch.name);
-  }
-  if (patch.recipe !== undefined) {
-    sets.push('recipe = ?');
-    vals.push(JSON.stringify(patch.recipe));
-  }
-  if (patch.thumb !== undefined) {
-    sets.push('thumb = ?');
-    vals.push(patch.thumb);
-  }
-  if (!sets.length) return;
-  getDb().runSync(`UPDATE snapshots SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
-}
-
-export function deleteVersion(id: string) {
-  getDb().runSync('DELETE FROM snapshots WHERE id = ?', [id]);
 }
 
 // ---------------------------------------------------------------------------- generic JSON tables

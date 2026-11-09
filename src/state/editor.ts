@@ -1,6 +1,6 @@
 import { AlphaType, ColorType, ImageFormat, type SkImage } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
-import { assetResources, hasNativeRenderer, readLibraryAdjustment } from 'hikari-native';
+import { assetResources, hasNativeRenderer } from 'hikari-native';
 import { makeMutable } from 'react-native-reanimated';
 import { scheduleOnUI } from 'react-native-worklets';
 import { create } from 'zustand';
@@ -11,6 +11,7 @@ import { bakeCurveLut } from '@/core/color/curve';
 import { komorebiStartingLook } from '@/core/companion/komorebi';
 import { cubeToStrip, parseCube } from '@/core/color/cube';
 import * as db from '@/core/db/db';
+import { savePhotoEdit } from '@/core/export/exporter';
 import { evictSource, hasSource, loadSource } from '@/core/image/load';
 import { composeMask, isAiMask, maskBase, maskBaseKey, peekMaskBase, renderBrushMask } from '@/core/pipeline/masks';
 import { describeInputs, editorSurface, nativeOf } from '@/core/pipeline/nativeImage';
@@ -29,9 +30,8 @@ import { applySettings, isEdited, pickSections, recipeHash } from '@/core/recipe
 import type { BrushStroke, Mask, MaskType, Recipe, RecipeSection, RecipeSettings, RetouchSpot } from '@/core/recipe/schema';
 import { recipeFromVersion } from '@/core/recipe/versions';
 import { buildRetouch } from '@/core/retouch/remove';
-import { writeIntoFolder } from '@/core/sources/folders';
+import { loadPhotoEdit, setEditDraft } from '@/core/sources/edits';
 import type { PhotoItem } from '@/core/sources/types';
-import { readSidecar, sidecarName, writeSidecar } from '@/core/xmp/sidecar';
 import { getBool, getPreviewDim } from './prefs';
 
 /**
@@ -143,6 +143,10 @@ interface EditorState {
   hasPair: boolean;
   /** Saved versions of the open photo, newest first. */
   versions: db.PhotoVersion[];
+  /** recipeHash of what's saved with the photo. */
+  savedHash: string | null;
+  versionsDirty: boolean;
+  saving: boolean;
 
   open(item: PhotoItem): Promise<void>;
   close(): void;
@@ -175,6 +179,12 @@ interface EditorState {
   setRemoveObjects(v: boolean): void;
   importLut(uri: string, name: string): Promise<void>;
   renderPreview(maxDim: number): SkImage | null;
+  /** Writes the edit to the photo's sidecar (folders) or into the photo (library). */
+  save(): Promise<void>;
+  /** Lets an export opened from the editor see the edit that's on screen. */
+  shareDraft(): void;
+  /** The photo was just reverted in Photos, so the reset recipe is what's stored now. */
+  markReverted(): void;
   /** Save the current settings as a new named version. */
   createVersion(name: string): void;
   /** Load a version's settings as one (undoable) history step. */
@@ -185,9 +195,7 @@ interface EditorState {
   deleteVersion(id: string): void;
 }
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** Grid thumbnails are rendered + JPEG-encoded on the JS thread, so they wait for a pause in editing. */
-let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 let histTimer: ReturnType<typeof setTimeout> | null = null;
 /** Only the newest histogram request may publish its result. */
 let histogramSeq = 0;
@@ -237,22 +245,8 @@ const thumbDir = () => {
   return d;
 };
 
-/** Version thumbnails are kept with the documents: unlike grid thumbs they can't be re-rendered without opening each version. */
-const versionDir = () => {
-  const d = new Directory(Paths.document, 'versions');
-  if (!d.exists) d.create({ intermediates: true, idempotent: true });
-  return d;
-};
-
-function deleteFileUri(uri: string | null) {
-  if (!uri) return;
-  try {
-    const f = new File(uri);
-    if (f.exists) f.delete();
-  } catch {
-    // a missing thumbnail only shows a placeholder
-  }
-}
+export const hasUnsavedEdit = (s: Pick<EditorState, 'recipe' | 'savedHash' | 'versionsDirty'>) =>
+  !!s.recipe && (s.versionsDirty || recipeHash(s.recipe) !== s.savedHash);
 
 export const useEditor = create<EditorState>((set, get) => {
   /** Rebuild GPU resources affected by a recipe change. */
@@ -356,7 +350,7 @@ export const useEditor = create<EditorState>((set, get) => {
     };
     set({ inputs });
     publishInputs(inputs);
-    scheduleSave();
+    scheduleHistogram();
   }
 
   /** Detects an AI mask once (however many edits arrive meanwhile) and merges it into the current inputs. */
@@ -388,11 +382,7 @@ export const useEditor = create<EditorState>((set, get) => {
     publishInputs(inputs);
   }
 
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(persist, 450);
-    if (thumbTimer) clearTimeout(thumbTimer);
-    thumbTimer = setTimeout(writeThumb, 1800);
+  function scheduleHistogram() {
     if (histTimer) clearTimeout(histTimer);
     histTimer = setTimeout(updateHistogram, 120);
   }
@@ -416,33 +406,15 @@ export const useEditor = create<EditorState>((set, get) => {
     }
   }
 
-  function persist() {
-    const { item, recipe } = get();
-    if (!item || !recipe) return;
-    const edited = isEdited(recipe);
-    const hash = recipeHash(recipe);
-    db.saveRecipe(item.key, recipe, edited, hash, item.folderId);
-    if (item.kind === 'file' && item.dirUri && getBool('writeSidecars', true)) {
-      try {
-        writeIntoFolder(item.dirUri, sidecarName(item.filename), 'application/rdf+xml', writeSidecar(recipe));
-      } catch {
-        // read-only folders still keep the recipe in the catalog
-      }
-    }
-    saveTimer = null;
-    import('./library').then((m) => m.useLibrary.getState().refreshMeta([item.key]));
-  }
-
   /** Edited thumbnail for the grids. */
   function writeThumb() {
-    thumbTimer = null;
     const { item, recipe, inputs } = get();
     if (!item || !recipe || !inputs) return;
     try {
       const edited = isEdited(recipe);
       const thumb = edited ? get().renderPreview(640) : null;
       if (thumb) {
-        const f = new File(thumbDir(), `${recipeHash(recipe)}.jpg`);
+        const f = new File(thumbDir(), `${recipeHash(recipe, item.key)}.jpg`);
         if (!f.exists) f.write(thumb.encodeToBytes(ImageFormat.JPEG, 85));
         db.setThumb(item.key, f.uri);
       } else {
@@ -454,29 +426,25 @@ export const useEditor = create<EditorState>((set, get) => {
     }
   }
 
-  /** Small thumbnail of what's on screen for the versions list (the name carries the hash so updates bust image caches). */
-  function writeVersionThumb(id: string): string | null {
-    const { recipe } = get();
-    if (!recipe) return null;
+  /** Cached preview of this photo under `look` (presets, versions); doesn't touch the open recipe. */
+  function lookThumb(look: Recipe): string | null {
+    const { item, recipe, inputs } = get();
+    if (!item || !recipe || !inputs) return null;
     try {
-      const img = get().renderPreview(320);
-      if (!img) return null;
-      const f = new File(versionDir(), `${id}-${recipeHash(recipe)}.jpg`);
-      if (!f.exists) f.write(img.encodeToBytes(ImageFormat.JPEG, 80));
+      const f = new File(thumbDir(), `look-${recipeHash(look, item.key)}.jpg`);
+      if (!f.exists) {
+        const long = Math.max(inputs.frame.width, inputs.frame.height);
+        const lookInputs = {
+          ...inputs,
+          curve: makeRgbaImage(bakeCurveLut(look.curves), 256, 1),
+          lut: look.lut.id === recipe.lut.id ? inputs.lut : loadLutImage(look.lut.id),
+        };
+        f.write(renderToImage(lookInputs, look, Math.min(1, 320 / long)).encodeToBytes(ImageFormat.JPEG, 80));
+      }
       return f.uri;
     } catch {
+      // a missing preview only leaves the tile blank
       return null;
-    }
-  }
-
-  function flushPending() {
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      persist();
-    }
-    if (thumbTimer) {
-      clearTimeout(thumbTimer);
-      writeThumb();
     }
   }
 
@@ -503,10 +471,12 @@ export const useEditor = create<EditorState>((set, get) => {
     clipboard: null,
     hasPair: false,
     versions: [],
+    savedHash: null,
+    versionsDirty: false,
+    saving: false,
 
     async open(item) {
-      // swiping to another photo: save the one being left before its state is replaced
-      flushPending();
+      setEditDraft(null);
       const token = ++openToken;
       liveRecipe.value = null;
       publishInputs(null);
@@ -525,10 +495,12 @@ export const useEditor = create<EditorState>((set, get) => {
         maskBrushing: false,
         retouchBusy: false,
         compare: 'off',
-        versions: db.listVersions(item.key),
+        versions: [],
+        savedHash: null,
+        versionsDirty: false,
       });
       try {
-        const { recipe, hasPair } = await resolveRecipe(item);
+        const { recipe, hasPair, versions } = await resolveRecipe(item);
         const prepared = await loadSource(recipe.source, getPreviewDim(), rawOptions(recipe));
         if (token !== openToken) return;
         const inputs = prepareInputs(prepared, recipe.detail.sharpenRadius, {
@@ -537,11 +509,12 @@ export const useEditor = create<EditorState>((set, get) => {
           maskTextures: {},
           retouch: [],
         });
-        set({ recipe, inputs, prepared, loading: false, hasPair });
+        set({ recipe, inputs, prepared, loading: false, hasPair, versions, savedHash: recipeHash(recipe) });
         publishInputs(inputs);
         liveRecipe.value = recipe;
         await syncResources({ ...recipe, masks: [], retouch: [] }, recipe);
         updateHistogram();
+        if (versions.length && token === openToken) set({ versions: versions.map((v) => ({ ...v, thumb: lookThumb(v.recipe) })) });
       } catch (e) {
         recipeCache.delete(item.key);
         if (token === openToken) set({ loading: false, error: e instanceof Error ? e.message : String(e) });
@@ -549,11 +522,11 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     close() {
-      flushPending();
+      setEditDraft(null);
       openToken++;
       liveRecipe.value = null;
       publishInputs(null);
-      set({ item: null, recipe: null, inputs: null, prepared: null, past: [], future: [], histogram: null, versions: [] });
+      set({ item: null, recipe: null, inputs: null, prepared: null, past: [], future: [], histogram: null, versions: [], savedHash: null, versionsDirty: false });
     },
 
     commit(next) {
@@ -566,7 +539,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ recipe: stamped, past: [...past.slice(-HISTORY_LIMIT + 1), prev], future: [] });
       liveRecipe.value = stamped;
       syncResources(prev, stamped);
-      scheduleSave();
+      scheduleHistogram();
     },
 
     update(fn) {
@@ -581,7 +554,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ recipe: prev, past: past.slice(0, -1), future: [recipe, ...future] });
       liveRecipe.value = prev;
       syncResources(recipe, prev);
-      scheduleSave();
+      scheduleHistogram();
     },
 
     redo() {
@@ -591,7 +564,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set({ recipe: next, past: [...past, recipe], future: future.slice(1) });
       liveRecipe.value = next;
       syncResources(recipe, next);
-      scheduleSave();
+      scheduleHistogram();
     },
 
     setTool: (tool) => set({ tool, activeMaskId: tool === 'masks' ? get().activeMaskId : null, maskBrushing: false }),
@@ -715,13 +688,36 @@ export const useEditor = create<EditorState>((set, get) => {
       return renderToImage(inputs, recipe, Math.min(1, maxDim / long));
     },
 
-    createVersion(name) {
+    async save() {
+      const { item, recipe, versions, saving } = get();
+      if (!item || !recipe || saving) return;
+      set({ saving: true });
+      try {
+        await savePhotoEdit(item, recipe, versions);
+        recipeCache.delete(item.key);
+        if (get().item?.key === item.key) set({ savedHash: recipeHash(recipe), versionsDirty: false });
+        if (get().recipe === recipe) writeThumb();
+      } finally {
+        set({ saving: false });
+      }
+    },
+
+    shareDraft() {
+      const { item, recipe, versions } = get();
+      if (item && recipe) setEditDraft({ key: item.key, recipe, versions });
+    },
+
+    markReverted() {
       const { item, recipe, versions } = get();
       if (!item || !recipe) return;
-      const id = db.newId();
-      const v: db.PhotoVersion = { id, name, recipe, thumb: writeVersionThumb(id), createdAt: Date.now() };
-      db.addVersion(item.key, v);
-      set({ versions: [v, ...versions] });
+      recipeCache.delete(item.key);
+      set({ savedHash: recipeHash(recipe), versionsDirty: versions.length > 0 });
+    },
+
+    createVersion(name) {
+      const { recipe, versions } = get();
+      if (!recipe) return;
+      set({ versions: [{ id: db.newId(), name, recipe, thumb: lookThumb(recipe), createdAt: Date.now() }, ...versions], versionsDirty: true });
     },
 
     applyVersion(id) {
@@ -736,40 +732,35 @@ export const useEditor = create<EditorState>((set, get) => {
 
     updateVersion(id) {
       const { recipe, versions } = get();
-      const v = versions.find((x) => x.id === id);
-      if (!recipe || !v) return;
-      const thumb = writeVersionThumb(id);
-      if (thumb !== v.thumb) deleteFileUri(v.thumb);
-      db.updateVersion(id, { recipe, thumb });
-      set({ versions: versions.map((x) => (x.id === id ? { ...x, recipe, thumb } : x)) });
+      if (!recipe) return;
+      set({ versions: versions.map((x) => (x.id === id ? { ...x, recipe, thumb: lookThumb(recipe) } : x)), versionsDirty: true });
     },
 
     renameVersion(id, name) {
-      db.updateVersion(id, { name });
-      set({ versions: get().versions.map((x) => (x.id === id ? { ...x, name } : x)) });
+      set({ versions: get().versions.map((x) => (x.id === id ? { ...x, name } : x)), versionsDirty: true });
     },
 
     deleteVersion(id) {
-      const v = get().versions.find((x) => x.id === id);
-      if (!v) return;
-      db.deleteVersion(id);
-      deleteFileUri(v.thumb);
-      set({ versions: get().versions.filter((x) => x.id !== id) });
+      set({ versions: get().versions.filter((x) => x.id !== id), versionsDirty: true });
     },
   };
 });
 
-/** Recipes resolved by `prefetch`, reused by the next `open` of that photo. */
-const recipeCache = new Map<string, { recipe: Recipe; hasPair: boolean }>();
+interface ResolvedPhoto {
+  recipe: Recipe;
+  hasPair: boolean;
+  versions: db.PhotoVersion[];
+}
 
-/** The stored (catalog, Photos adjustment or sidecar) recipe for a photo, or a fresh one. */
-async function resolveRecipe(item: PhotoItem): Promise<{ recipe: Recipe; hasPair: boolean }> {
+/** Recipes resolved by `prefetch`, reused by the next `open` of that photo. */
+const recipeCache = new Map<string, ResolvedPhoto>();
+
+/** The recipe saved with a photo (sidecar or Photos adjustment), or a fresh one. */
+async function resolveRecipe(item: PhotoItem): Promise<ResolvedPhoto> {
   const cached = recipeCache.get(item.key);
   if (cached) {
-    // the catalog wins if the photo was edited since it was prefetched
-    const stored = db.loadRecipe(item.key);
     recipeCache.delete(item.key);
-    return stored ? { recipe: stored, hasPair: cached.hasPair } : cached;
+    return cached;
   }
   let hasPair = !!item.pair;
   let isRaw = item.isRaw;
@@ -779,17 +770,8 @@ async function resolveRecipe(item: PhotoItem): Promise<{ recipe: Recipe; hasPair
     if (res?.hasRaw && res.hasPhoto) hasPair = true;
     else if (res?.hasRaw) isRaw = true;
   }
-  let recipe = db.loadRecipe(item.key);
-  if (!recipe && item.kind === 'library') {
-    const json = await readLibraryAdjustment(item.id);
-    if (json) {
-      const { migrateRecipe } = await import('@/core/recipe/ops');
-      recipe = migrateRecipe(JSON.parse(json));
-    }
-  }
-  if (!recipe && item.kind === 'file' && item.dirUri) {
-    recipe = recipeFromSidecar(item);
-  }
+  const stored = await loadPhotoEdit(item);
+  let recipe = stored.recipe;
   if (!recipe) {
     recipe = createRecipe({
       kind: item.kind,
@@ -806,7 +788,7 @@ async function resolveRecipe(item: PhotoItem): Promise<{ recipe: Recipe; hasPair
       if (look) recipe = { ...recipe, lut: look.lut ?? recipe.lut, effects: { ...recipe.effects, ...look.effects } };
     }
   }
-  return { recipe, hasPair };
+  return { recipe, hasPair, versions: stored.versions.map((v) => ({ ...v, thumb: null })) };
 }
 
 /**
@@ -828,30 +810,4 @@ export function prefetchPhoto(item: PhotoItem) {
       recipeCache.delete(item.key);
     }
   });
-}
-
-function recipeFromSidecar(item: PhotoItem): Recipe | null {
-  try {
-    const dir = new Directory(item.dirUri!);
-    const name = sidecarName(item.filename).toLowerCase();
-    const f = dir.list().find((e) => !(e instanceof Directory) && e.name.toLowerCase() === name) as File | undefined;
-    if (!f) return null;
-    const data = readSidecar(f.textSync());
-    if (data.recipe) return { ...data.recipe, source: { ...data.recipe.source, id: item.id, uri: item.uri } };
-    if (Object.keys(data.crs).length) {
-      const r = createRecipe({
-        kind: 'file',
-        id: item.id,
-        uri: item.uri,
-        filename: item.filename,
-        pairedUri: item.pair?.uri ?? null,
-        useRaw: item.isRaw || !!item.pair,
-        isRaw: item.isRaw,
-      });
-      return applySettings(r, data.crs, false);
-    }
-  } catch {
-    // unreadable sidecar → start fresh
-  }
-  return null;
 }

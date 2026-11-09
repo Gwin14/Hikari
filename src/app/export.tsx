@@ -8,7 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { listFolders, listJson, newId, upsertJson } from '@/core/db/db';
-import { exportItems, recipeFor, type ExportProgress } from '@/core/export/exporter';
+import { editFor, exportItems, type ExportProgress } from '@/core/export/exporter';
+import type { Recipe } from '@/core/recipe/schema';
 import {
   defaultExportOptions,
   expandFilename,
@@ -69,11 +70,20 @@ export default function ExportScreen() {
   const first = items[0];
   const thumb = useLibrary((st) => (first ? (st.meta.get(first.key)?.thumb ?? null) : null));
   const previewUri = first ? (thumb ?? first.thumbUri ?? cachedThumb(first)) : null;
+  const [firstGeometry, setFirstGeometry] = useState<Recipe['geometry'] | null>(null);
+  useEffect(() => {
+    if (!first) return;
+    let live = true;
+    editFor(first).then(({ recipe }) => live && setFirstGeometry(recipe.geometry));
+    return () => {
+      live = false;
+    };
+  }, [first]);
   const estimate = useMemo(() => {
-    if (!first || !first.width) return null;
-    const g = geometryMatrix(recipeFor(first).geometry, first.width, first.height);
+    if (!first || !first.width || !firstGeometry) return null;
+    const g = geometryMatrix(firstGeometry, first.width, first.height);
     return outputSize(g.outW, g.outH, o.sizeMode, o.sizeValue);
-  }, [first, o.sizeMode, o.sizeValue]);
+  }, [first, firstGeometry, o.sizeMode, o.sizeValue]);
 
   const destinations: { value: Destination; label: string; hint?: string }[] = [
     { value: 'library', label: t('export.toLibrary') },

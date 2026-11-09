@@ -1,16 +1,17 @@
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, usePreventRemove } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { handoffReturnUrl, returnToKomorebi } from '@/core/companion/komorebi';
 import { cachedThumb } from '@/core/thumbs';
 import { hasRaw, keyMatches } from '@/core/sources/types';
-import { prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
+import { canSaveEdit } from '@/core/sources/edits';
+import { hasUnsavedEdit, prefetchPhoto, useEditor, type ToolId } from '@/state/editor';
 import { useLibrary } from '@/state/library';
 import { usePrefBool } from '@/state/prefs';
 import { CurveEditor } from '@/ui/editor/CurveEditor';
@@ -35,7 +36,7 @@ import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
 import { RetouchPanel } from '@/ui/editor/panels/RetouchPanel';
 import { VersionsPanel } from '@/ui/editor/panels/VersionsPanel';
 import { toolMeta, ToolBar } from '@/ui/editor/ToolBar';
-import { Button, IconButton, PressableScale, tick } from '@/ui/kit';
+import { Button, IconButton, notifySuccess, PressableScale, tick } from '@/ui/kit';
 import { colors, common, curve, radius, raised, space, tabular, ThemeProvider, type } from '@/ui/theme';
 
 export default function EditorScreen() {
@@ -59,7 +60,12 @@ export default function EditorScreen() {
   const ready = useEditor((s) => !!s.inputs && !!item && s.item?.key === item.key);
   const thumb = useLibrary((s) => (item ? (s.meta.get(item.key)?.thumb ?? null) : null));
   const previewUri = item ? (thumb ?? item.thumbUri ?? cachedThumb(item)) : null;
-  const { open, close, undo, redo, setTool, setCompare, auto } = useEditor.getState();
+  const { open, close, undo, redo, setTool, setCompare, auto, shareDraft } = useEditor.getState();
+  const dirty = useEditor(hasUnsavedEdit);
+  const saving = useEditor((s) => s.saving);
+  const [savedKey, setSavedKey] = useState<string | null>(null);
+  // set once the user has chosen to leave, so the repeated navigation isn't stopped again
+  const [leaving, setLeaving] = useState(false);
   const [sheet, setSheet] = useState<'menu' | 'copy' | 'info' | null>(null);
   const [histPref, setShowHist] = usePrefBool('showHistogram');
   const showHist = histPref ?? true;
@@ -82,6 +88,40 @@ export default function EditorScreen() {
   const fromKomorebi = item?.kind === 'library' && !!handoffReturnUrl(item.id);
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
+  const save = async () => {
+    if (!item) return false;
+    if (!canSaveEdit(item)) {
+      Alert.alert(t('editor.saveUnavailable'));
+      return false;
+    }
+    try {
+      await useEditor.getState().save();
+      notifySuccess();
+      setSavedKey(item.key);
+      return true;
+    } catch (e) {
+      Alert.alert(t('common.error'), e instanceof Error ? e.message : String(e));
+      return false;
+    }
+  };
+
+  /** Runs `proceed` once the user has decided what happens to unsaved changes. */
+  const guardUnsaved = (proceed: () => void) => {
+    if (!hasUnsavedEdit(useEditor.getState())) return proceed();
+    Alert.alert(t('editor.unsavedTitle'), t('editor.unsavedBody'), [
+      ...(item && canSaveEdit(item) ? [{ text: t('common.save'), onPress: () => void save().then((ok) => ok && proceed()) }] : []),
+      { text: t('editor.discard'), style: 'destructive' as const, onPress: proceed },
+      { text: t('common.cancel'), style: 'cancel' as const },
+    ]);
+  };
+
+  usePreventRemove(dirty && !leaving, ({ repeat }) =>
+    guardUnsaved(() => {
+      setLeaving(true);
+      repeat();
+    }),
+  );
+
   const landscape = width > height;
   const panelHeight = landscape ? undefined : Math.round(height * 0.36);
   const showRaw = !!item && (hasRaw(item) || hasPair || !!recipe?.source.isRaw);
@@ -90,7 +130,7 @@ export default function EditorScreen() {
     const next = sequence[index + d];
     if (!next) return;
     tick();
-    router.setParams({ key: next.key });
+    guardUnsaved(() => router.setParams({ key: next.key }));
   };
 
   const onTool = (id: ToolId) => {
@@ -179,8 +219,25 @@ export default function EditorScreen() {
           <IconButton icon="more" onPress={() => setSheet('menu')} label={t('editor.more')} />
           <PressableScale
             accessibilityRole="button"
+            accessibilityLabel={t('common.save')}
+            accessibilityState={{ disabled: !dirty || saving, busy: saving }}
+            disabled={!dirty || saving}
+            onPress={save}
+            style={[styles.save, !dirty && !saving && styles.saveIdle]}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color={colors.text} />
+            ) : (
+              <Text style={styles.saveText}>{!dirty && savedKey === item.key ? t('editor.saved') : t('common.save')}</Text>
+            )}
+          </PressableScale>
+          <PressableScale
+            accessibilityRole="button"
             accessibilityLabel={exportLabel}
-            onPress={() => router.push({ pathname: '/export', params: { keys: item.key } })}
+            onPress={() => {
+              shareDraft();
+              router.push({ pathname: '/export', params: { keys: item.key } });
+            }}
             style={styles.export}
           >
             <Text style={styles.exportText}>{exportLabel}</Text>
@@ -251,6 +308,18 @@ const styles = StyleSheet.create({
   titleBlock: { flex: 1, alignItems: 'center', paddingHorizontal: space.xs },
   name: { color: colors.text, ...type.subhead, fontWeight: '600', textAlign: 'center' },
   position: { color: colors.textDim, ...type.caption2, marginTop: 1, ...tabular },
+  save: {
+    height: 34,
+    minWidth: 68,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    ...curve,
+    backgroundColor: colors.surface2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveIdle: { opacity: 0.45 },
+  saveText: { color: colors.text, ...type.subhead, fontWeight: '700' },
   export: {
     height: 34,
     paddingHorizontal: space.lg,

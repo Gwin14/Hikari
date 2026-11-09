@@ -1,12 +1,11 @@
 import { router, Stack, useLocalSearchParams, usePreventRemove } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import * as db from '@/core/db/db';
-import { recipeFor, refreshThumb } from '@/core/export/exporter';
-import { applySettings, isEdited, recipeHash } from '@/core/recipe/ops';
+import { editFor, refreshThumb, savePhotoEdit } from '@/core/export/exporter';
+import { applySettings } from '@/core/recipe/ops';
 import { listPresets } from '@/core/recipe/presetStore';
 import type { RecipeSettings } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
@@ -14,7 +13,7 @@ import { findItems, useLibrary } from '@/state/library';
 import { Button, EmptyState, Group, ListRow, notifySuccess, ProgressBar } from '@/ui/kit';
 import { space, tabular, type, useStyles, useTheme, type Palette } from '@/ui/theme';
 
-/** Apply copied edits or a preset to many photos at once (non-destructive, catalog only). */
+/** Apply copied edits or a preset to many photos at once (saved with each photo). */
 export default function BatchScreen() {
   const { t } = useTranslation();
   const c = useTheme();
@@ -33,33 +32,36 @@ export default function BatchScreen() {
     clipboard ? { id: 'clipboard', name: t('editor.paste'), settings: clipboard.settings } : null,
   );
   const [done, setDone] = useState<number | null>(null);
-  const [finished, setFinished] = useState(false);
+  const [finished, setFinished] = useState<string[] | null>(null);
   usePreventRemove(done !== null && !finished, () => {});
 
   const run = async () => {
     if (!choice) return;
     setDone(0);
+    const failed: string[] = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      const next = applySettings(recipeFor(it), choice.settings);
-      db.saveRecipe(it.key, next, isEdited(next), recipeHash(next), it.folderId);
       try {
-        await refreshThumb(it, next);
-      } catch {
-        // thumbnail is best effort
+        const edit = await editFor(it);
+        const next = applySettings(edit.recipe, choice.settings);
+        await savePhotoEdit(it, next, edit.versions);
+        await refreshThumb(it, next).catch(() => {}); // thumbnail is best effort
+      } catch (e) {
+        failed.push(`${it.filename}: ${e instanceof Error ? e.message : String(e)}`);
       }
       setDone(i + 1);
     }
     useLibrary.getState().refreshMeta(items.map((i) => i.key));
     useLibrary.getState().clearSelection();
-    setFinished(true);
+    setFinished(failed);
   };
 
   useEffect(() => {
     if (!finished) return;
-    notifySuccess();
+    if (finished.length) Alert.alert(t('common.error'), finished.join('\n'));
+    else notifySuccess();
     router.back();
-  }, [finished]);
+  }, [finished, t]);
 
   const title = t('batch.title', { count: items.length });
 

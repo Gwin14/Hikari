@@ -54,10 +54,11 @@ export function EditorMenu(props: { sheet: Sheet; onSheet(s: Sheet): void; histo
         style: 'destructive',
         onPress: async () => {
           resetAll();
-          db.clearEdit(item.key);
           if (item.kind === 'library' && Platform.OS === 'ios' && isNativeAvailable) {
+            db.clearEdit(item.key);
             try {
               await revertLibraryEdit(item.id);
+              useEditor.getState().markReverted();
             } catch {
               // the asset may have no Hikari edit in Photos
             }

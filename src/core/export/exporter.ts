@@ -2,7 +2,7 @@ import { AlphaType, ColorType, ImageFormat, matchFont, Skia, type SkCanvas, type
 import { Directory, File, Paths } from 'expo-file-system';
 import { Album, Asset } from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
-import { encodeImage, hasNativeRenderer, isNativeAvailable, renderOffscreen, saveEditToLibrary, type EncodeOptions } from 'hikari-native';
+import { encodeImage, hasNativeRenderer, isNativeAvailable, readLibraryAdjustment, renderOffscreen, revertLibraryEdit, saveEditToLibrary, type EncodeOptions } from 'hikari-native';
 import { Platform } from 'react-native';
 
 import * as db from '../db/db';
@@ -20,8 +20,9 @@ import { isEdited, recipeHash } from '../recipe/ops';
 import type { Recipe, SourceRef } from '../recipe/schema';
 import { openFolder, writeIntoFolder } from '../sources/folders';
 import type { PhotoItem } from '../sources/types';
-import { sidecarName, writeSidecar } from '../xmp/sidecar';
-import { expandFilename, FORMAT_EXT, FORMAT_MIME, outputSize, type ExportOptions } from './options';
+import { canSaveEdit, deleteLegacyVersionThumbs, editDraft, loadPhotoEdit } from '../sources/edits';
+import { libraryAdjustment, sidecarName, writeSidecar, type SavedVersion } from '../xmp/sidecar';
+import { defaultExportOptions, expandFilename, FORMAT_EXT, FORMAT_MIME, outputSize, type ExportOptions } from './options';
 
 export function sourceFromItem(item: PhotoItem, useRaw: boolean): SourceRef {
   return {
@@ -35,7 +36,30 @@ export function sourceFromItem(item: PhotoItem, useRaw: boolean): SourceRef {
   };
 }
 
-export const recipeFor = (item: PhotoItem): Recipe => db.loadRecipe(item.key) ?? createRecipe(sourceFromItem(item, true));
+/** What a photo renders as: the open photo's unsaved edit, else what is saved with it. */
+export async function editFor(item: PhotoItem): Promise<{ recipe: Recipe; versions: SavedVersion[] }> {
+  const edit = editDraft(item.key) ?? (await loadPhotoEdit(item));
+  return { recipe: edit.recipe ?? createRecipe(sourceFromItem(item, true)), versions: edit.versions };
+}
+
+/** Saves an edit with the photo: its sidecar in a folder, a revertible Photos edit in the library. */
+export async function savePhotoEdit(item: PhotoItem, recipe: Recipe, versions: readonly SavedVersion[]) {
+  if (!canSaveEdit(item)) throw new Error('This photo has nowhere to save an edit');
+  if (item.kind === 'file') {
+    writeIntoFolder(item.dirUri!, sidecarName(item.filename), 'application/rdf+xml', writeSidecar(recipe, 0, versions));
+  } else if (!isEdited(recipe) && !versions.length) {
+    if (await readLibraryAdjustment(item.id)) await revertLibraryEdit(item.id);
+  } else {
+    const out = await renderToFile(item, defaultExportOptions(), 1, true, recipe);
+    try {
+      await saveEditToLibrary(item.id, out.uri, libraryAdjustment(recipe, versions), String(recipe.version));
+    } finally {
+      new File(out.uri).delete();
+    }
+  }
+  deleteLegacyVersionThumbs(item.key);
+  db.markEditSaved(item.key, recipe, isEdited(recipe), recipeHash(recipe), item.folderId);
+}
 
 export function lutFor(id: string | null) {
   if (!id) return null;
@@ -128,8 +152,8 @@ export interface RenderedFile {
 }
 
 /** Renders and encodes one photo to a temporary file. */
-export async function renderToFile(item: PhotoItem, o: ExportOptions, seq: number, forceJpegFull = false): Promise<RenderedFile> {
-  const base = recipeFor(item);
+export async function renderToFile(item: PhotoItem, o: ExportOptions, seq: number, forceJpegFull = false, edit?: Recipe): Promise<RenderedFile> {
+  const base = edit ?? (await editFor(item)).recipe;
   const recipe: Recipe = {
     ...base,
     detail: {
@@ -268,10 +292,10 @@ export async function exportItems(items: PhotoItem[], o: ExportOptions, onProgre
     onProgress({ ...progress });
     try {
       const inPlace = o.destination === 'libraryEdit' && item.kind === 'library' && Platform.OS === 'ios' && isNativeAvailable;
-      const out = await renderToFile(item, o, i + 1, inPlace);
-      const recipe = recipeFor(item);
+      const { recipe, versions } = await editFor(item);
+      const out = await renderToFile(item, o, i + 1, inPlace, recipe);
       if (inPlace) {
-        await saveEditToLibrary(item.id, out.uri, JSON.stringify(recipe), String(recipe.version));
+        await saveEditToLibrary(item.id, out.uri, libraryAdjustment(recipe, versions), String(recipe.version));
         new File(out.uri).delete();
       } else if (o.destination === 'library' || o.destination === 'libraryEdit') {
         const asset = await Asset.create(out.uri);
@@ -312,7 +336,7 @@ export async function exportItems(items: PhotoItem[], o: ExportOptions, onProgre
 
 /** Re-renders the grid thumbnail for an item after a batch edit. */
 export async function refreshThumb(item: PhotoItem, recipe: Recipe) {
-  const hash = recipeHash(recipe);
+  const hash = recipeHash(recipe, item.key);
   if (!isEdited(recipe)) {
     db.setThumb(item.key, null);
     return;

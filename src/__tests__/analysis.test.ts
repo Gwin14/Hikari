@@ -3,7 +3,7 @@ import { pairItems } from '@/core/sources/pairing';
 import type { PhotoItem } from '@/core/sources/types';
 import { expandFilename, outputSize } from '@/core/export/options';
 import { apply, geometryMatrix, invert, rotatedSize } from '@/core/pipeline/geometry';
-import { readSidecar, sidecarName, writeSidecar } from '@/core/xmp/sidecar';
+import { libraryAdjustment, parseLibraryAdjustment, readSidecar, sidecarName, writeSidecar } from '@/core/xmp/sidecar';
 import { createRecipe, defaultSettings } from '@/core/recipe/defaults';
 
 jest.mock('hikari-native', () => ({
@@ -169,6 +169,25 @@ describe('XMP sidecars', () => {
     expect(back.recipe?.light).toEqual(r.light);
     expect(back.recipe?.hsl.blue.sat).toBe(-30);
     expect(sidecarName('IMG_0001.CR3')).toBe('IMG_0001.xmp');
+  });
+
+  it('keeps named versions in the sidecar and in Photos adjustment data', () => {
+    const base = createRecipe({ kind: 'file', id: 'f', uri: 'file:///a.jpg', filename: 'a.jpg', pairedUri: null, useRaw: false, isRaw: false });
+    const warm = { ...base, color: { ...base.color, temperature: 20 } };
+    const versions = [{ id: 'v1', name: 'Warm', recipe: warm, createdAt: 5 }];
+
+    const fromXmp = readSidecar(writeSidecar(base, 0, versions));
+    expect(fromXmp.versions).toHaveLength(1);
+    expect(fromXmp.versions[0]).toMatchObject({ id: 'v1', name: 'Warm', createdAt: 5 });
+    expect(fromXmp.versions[0].recipe.color.temperature).toBe(20);
+    expect(readSidecar(writeSidecar(base)).versions).toEqual([]);
+
+    const fromPhotos = parseLibraryAdjustment(libraryAdjustment(warm, versions));
+    expect(fromPhotos.recipe?.color.temperature).toBe(20);
+    expect(fromPhotos.versions[0].name).toBe('Warm');
+    // adjustment data saved before versions moved here is a bare recipe
+    expect(parseLibraryAdjustment(JSON.stringify(warm))).toMatchObject({ versions: [] });
+    expect(parseLibraryAdjustment('not json')).toEqual({ recipe: null, versions: [] });
   });
 
   it('reads basic settings from a Lightroom sidecar', () => {
