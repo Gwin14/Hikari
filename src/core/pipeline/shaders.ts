@@ -77,26 +77,49 @@ float hash12(float2 p) {
 // Luminance-preserving scale of an encoded color to a new luminance.
 float3 setLuma(float3 p, float y0, float y1) {
   if (y0 <= 1.0e-4) return p + (y1 - y0);
-  float3 s = p * (y1 / y0);
-  // Desaturate toward white when pushed past 1 so highlights roll off cleanly.
+  // Chroma follows luminance, capped so lifting near-black doesn't amplify color noise.
+  float g = clamp(y1 / y0, 0.0, 2.5);
+  float3 s = y1 + (p - y0) * g;
+  // Past 1, pull chroma in just enough to keep luminance and hue instead of clipping a channel.
   float m = max(s.r, max(s.g, s.b));
-  if (m > 1.0) s = mix(s, float3(y1), clamp((m - 1.0) / max(m, 1.0e-3), 0.0, 1.0));
+  if (m > 1.0) s = y1 + (s - y1) * clamp((1.0 - y1) / max(m - y1, 1.0e-4), 0.0, 1.0);
   return s;
 }
 
+float shoulderCurve(float x, float k, float b) {
+  if (x <= k) return x;
+  float s = x - k;
+  return k + s / (1.0 + s * b);
+}
+
+// Compresses [knee, white] into [knee, 1]; identity when white is 1, so it fades in with exposure.
+// Below 1 the hue is held; further over, channels compress on their own and colors reach white.
+float3 highlightShoulder(float3 lin, float white) {
+  if (white <= 1.0) return lin;
+  float k = 0.8 - 0.35 * smoothstep(1.0, 5.0, log2(white));
+  float b = 1.0 / (1.0 - k) - 1.0 / (white - k);
+  float peak = max(lin.r, max(lin.g, lin.b));
+  if (peak <= k) return lin;
+  float3 held = lin * (shoulderCurve(peak, k, b) / peak);
+  float3 own = float3(shoulderCurve(lin.r, k, b), shoulderCurve(lin.g, k, b), shoulderCurve(lin.b, k, b));
+  return mix(held, own, smoothstep(1.0, 4.0, peak));
+}
+
+// Every step is monotonic over the slider range, so tones never swap order.
 float toneY(float y, float contrast, float highlights, float shadows, float whites, float blacks) {
-  // shadows / highlights act on smooth luminance zones
-  float ws = 1.0 - smoothstep(0.0, 0.6, y);
-  float wh = smoothstep(0.4, 1.0, y);
-  y += shadows * 0.45 * ws * ws * (1.0 - y * 0.5);
-  y += highlights * 0.4 * wh * wh * (highlights < 0.0 ? max(y, 0.4) : (1.0 - y * 0.6));
+  // shadows / highlights scale smooth luminance zones and leave black where it is
+  y *= 1.0 + shadows * (shadows > 0.0 ? 1.1 : 0.7) * (1.0 - smoothstep(0.0, 0.7, y));
+  if (highlights >= 0.0) y = 1.0 - (1.0 - y) * (1.0 - highlights * 0.6 * smoothstep(0.4, 1.0, y));
+  else y *= 1.0 + highlights * 0.35 * smoothstep(0.3, 1.0, y);
   // whites / blacks move the end points
-  y += whites * 0.3 * smoothstep(0.55, 1.0, y);
+  y += whites * 0.3 * smoothstep(0.4, 1.0, y);
   y += blacks * 0.2 * (1.0 - smoothstep(0.0, 0.35, y));
-  // contrast: symmetric power S-curve around mid grey
-  float k = contrast >= 0.0 ? 1.0 + contrast * 1.2 : 1.0 / (1.0 - contrast * 0.8);
+  // contrast: S-curve around mid grey; lowering it keeps a finite slope at both ends
   float yc = clamp(y, 0.0, 1.0);
-  float sc = yc < 0.5 ? 0.5 * pow(2.0 * yc, k) : 1.0 - 0.5 * pow(2.0 * (1.0 - yc), k);
+  float k = 1.0 + contrast * 1.2;
+  float sc = contrast < 0.0
+    ? yc - contrast * 0.0716 * sin(6.2831853 * yc)
+    : (yc < 0.5 ? 0.5 * pow(2.0 * yc, k) : 1.0 - 0.5 * pow(2.0 * (1.0 - yc), k));
   return sc + (y - yc);
 }
 `;
@@ -186,12 +209,7 @@ half4 main(float2 p) {
   lin *= exp2(uExposure);
 
   // --- highlight shoulder: compress >1 headroom smoothly into display range
-  float peak = max(lin.r, max(lin.g, lin.b));
-  if (peak > 0.8 && uHeadroom > 0.5) {
-    // C1-continuous knee: maps [0.8, inf) onto [0.8, 1.0)
-    float comp = 0.8 + 0.2 * (1.0 - exp(-(peak - 0.8) / 0.2));
-    lin *= comp / peak;
-  }
+  lin = highlightShoulder(lin, uHeadroom);
 
   // --- dehaze (dark-channel prior on the large blur)
   float3 e = encode(lin);
@@ -356,7 +374,7 @@ half4 main(float2 p) {
   float m = maskAt(p, e);
   if (m <= 0.0005) return inC;
 
-  float3 lin = decode(e) * float3(uWB) * exp2(uExposure);
+  float3 lin = highlightShoulder(decode(e) * float3(uWB) * exp2(uExposure), max(exp2(uExposure), 1.0));
   float3 a = encode(lin);
   if (uDehaze != 0.0) {
     float3 bl = encode(toLinearSrgb(blurL.eval(p).rgb));

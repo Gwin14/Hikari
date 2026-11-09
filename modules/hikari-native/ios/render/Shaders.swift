@@ -73,22 +73,41 @@ float hash12(float2 p) {
 
 float3 setLuma(float3 p, float y0, float y1) {
   if (y0 <= 1.0e-4) return p + (y1 - y0);
-  float3 s = p * (y1 / y0);
+  float g = clamp(y1 / y0, 0.0, 2.5);
+  float3 s = y1 + (p - y0) * g;
   float m = max(s.r, max(s.g, s.b));
-  if (m > 1.0) s = mix(s, float3(y1), clamp((m - 1.0) / max(m, 1.0e-3), 0.0, 1.0));
+  if (m > 1.0) s = y1 + (s - y1) * clamp((1.0 - y1) / max(m - y1, 1.0e-4), 0.0, 1.0);
   return s;
 }
 
+float shoulderCurve(float x, float k, float b) {
+  if (x <= k) return x;
+  float s = x - k;
+  return k + s / (1.0 + s * b);
+}
+
+float3 highlightShoulder(float3 lin, float white) {
+  if (white <= 1.0) return lin;
+  float k = 0.8 - 0.35 * smoothstep(1.0, 5.0, log2(white));
+  float b = 1.0 / (1.0 - k) - 1.0 / (white - k);
+  float peak = max(lin.r, max(lin.g, lin.b));
+  if (peak <= k) return lin;
+  float3 held = lin * (shoulderCurve(peak, k, b) / peak);
+  float3 own = float3(shoulderCurve(lin.r, k, b), shoulderCurve(lin.g, k, b), shoulderCurve(lin.b, k, b));
+  return mix(held, own, smoothstep(1.0, 4.0, peak));
+}
+
 float toneY(float y, float contrast, float highlights, float shadows, float whites, float blacks) {
-  float ws = 1.0 - smoothstep(0.0, 0.6, y);
-  float wh = smoothstep(0.4, 1.0, y);
-  y += shadows * 0.45 * ws * ws * (1.0 - y * 0.5);
-  y += highlights * 0.4 * wh * wh * (highlights < 0.0 ? max(y, 0.4) : (1.0 - y * 0.6));
-  y += whites * 0.3 * smoothstep(0.55, 1.0, y);
+  y *= 1.0 + shadows * (shadows > 0.0 ? 1.1 : 0.7) * (1.0 - smoothstep(0.0, 0.7, y));
+  if (highlights >= 0.0) y = 1.0 - (1.0 - y) * (1.0 - highlights * 0.6 * smoothstep(0.4, 1.0, y));
+  else y *= 1.0 + highlights * 0.35 * smoothstep(0.3, 1.0, y);
+  y += whites * 0.3 * smoothstep(0.4, 1.0, y);
   y += blacks * 0.2 * (1.0 - smoothstep(0.0, 0.35, y));
-  float k = contrast >= 0.0 ? 1.0 + contrast * 1.2 : 1.0 / (1.0 - contrast * 0.8);
   float yc = clamp(y, 0.0, 1.0);
-  float sc = yc < 0.5 ? 0.5 * pow(2.0 * yc, k) : 1.0 - 0.5 * pow(2.0 * (1.0 - yc), k);
+  float k = 1.0 + contrast * 1.2;
+  float sc = contrast < 0.0
+    ? yc - contrast * 0.0716 * sin(6.2831853 * yc)
+    : (yc < 0.5 ? 0.5 * pow(2.0 * yc, k) : 1.0 - 0.5 * pow(2.0 * (1.0 - yc), k));
   return sc + (y - yc);
 }
 
@@ -179,11 +198,7 @@ float4 develop(float2 p, constant DevelopU &U, T image, T blurN, T blurM, T blur
   lin *= wb;
   lin *= exp2(U.uExposure);
 
-  float peak = max(lin.r, max(lin.g, lin.b));
-  if (peak > 0.8 && U.uHeadroom > 0.5) {
-    float comp = 0.8 + 0.2 * (1.0 - exp(-(peak - 0.8) / 0.2));
-    lin *= comp / peak;
-  }
+  lin = highlightShoulder(lin, U.uHeadroom);
 
   float3 e = encode(lin);
   if (U.uDehaze != 0.0) {
@@ -312,7 +327,7 @@ float4 local(float2 p, float4 inC, constant LocalU &U, T mask, T source, T blurL
   float m = maskAt(p, e, U, mask);
   if (m <= 0.0005) return inC;
 
-  float3 lin = decode(e) * float3(U.uWB) * exp2(U.uExposure);
+  float3 lin = highlightShoulder(decode(e) * float3(U.uWB) * exp2(U.uExposure), max(exp2(U.uExposure), 1.0));
   float3 a = encode(lin);
   if (U.uDehaze != 0.0) {
     float3 bl = at(blurL, p, size).rgb;

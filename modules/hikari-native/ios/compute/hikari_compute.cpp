@@ -548,21 +548,31 @@ inline double encodeSrgb(double v) { return v <= 0.0031308 ? v * 12.92 : 1.055 *
 
 /** Mirror of toneY() in shaders.ts. */
 double toneY(double y, double contrast, double highlights, double shadows, double whites, double blacks) {
-  const double ws = 1 - smoothstep(0, 0.6, y);
-  const double wh = smoothstep(0.4, 1, y);
-  y += shadows * 0.45 * ws * ws * (1 - y * 0.5);
-  y += highlights * 0.4 * wh * wh * (highlights < 0 ? max(y, 0.4) : 1 - y * 0.6);
-  y += whites * 0.3 * smoothstep(0.55, 1, y);
+  y *= 1 + shadows * (shadows > 0 ? 1.1 : 0.7) * (1 - smoothstep(0, 0.7, y));
+  if (highlights >= 0) y = 1 - (1 - y) * (1 - highlights * 0.6 * smoothstep(0.4, 1, y));
+  else y *= 1 + highlights * 0.35 * smoothstep(0.3, 1, y);
+  y += whites * 0.3 * smoothstep(0.4, 1, y);
   y += blacks * 0.2 * (1 - smoothstep(0, 0.35, y));
-  const double k = contrast >= 0 ? 1 + contrast * 1.2 : 1 / (1 - contrast * 0.8);
   const double yc = clampTo(y, 0, 1);
-  const double sc = yc < 0.5 ? 0.5 * std::pow(2 * yc, k) : 1 - 0.5 * std::pow(2 * (1 - yc), k);
+  const double k = 1 + contrast * 1.2;
+  const double sc = contrast < 0
+    ? yc - contrast * 0.0716 * std::sin(6.2831853 * yc)
+    : (yc < 0.5 ? 0.5 * std::pow(2 * yc, k) : 1 - 0.5 * std::pow(2 * (1 - yc), k));
   return sc + (y - yc);
 }
 
+/** Mirror of highlightShoulder() in shaders.ts for a neutral value. */
+double shoulderY(double x, double white) {
+  if (white <= 1) return x;
+  const double k = 0.8 - 0.35 * smoothstep(1, 5, std::log2(white));
+  if (x <= k) return x;
+  const double s = x - k;
+  return k + s / (1 + s * (1 / (1 - k) - 1 / (white - k)));
+}
+
 double developY(double e, const Light &L) {
-  double lin = decodeSrgb(e) * std::pow(2, L.exposure);
-  if (L.exposure > 0 && lin > 0.8) lin = 0.8 + 0.2 * (1 - std::exp(-(lin - 0.8) / 0.2));
+  const double gain = std::pow(2, L.exposure);
+  const double lin = shoulderY(decodeSrgb(e) * gain, max(1.0, gain));
   const double y = toneY(encodeSrgb(lin), L.contrast / 100, L.highlights / 100, L.shadows / 100, L.whites / 100, L.blacks / 100);
   return clampTo(y, 0, 1);
 }
@@ -620,7 +630,11 @@ Light autoTone(const uint32_t *lumaBins, uint32_t total, double clipHigh) {
   for (int i = 0; i < 256; i++)
     if (developY(i / 255.0, L) < 0.08) dark += lumaBins[i];
   const double lowKey = clampTo(1.5 - (2 * dark) / n, 0.25, 1);
-  L.shadows = clampTo((0.12 - developY(p10, L)) * 220, 0, 35) * lowKey;
+  L.shadows = solveBisect([&](double x) {
+    Light t = L;
+    t.shadows = x;
+    return developY(p10, t);
+  }, 0.12, 0, 50) * lowKey;
 
   // whites / blacks: only extend the end points the image doesn't reach (anymore)
   if (developY(p995, L) < 0.96) {

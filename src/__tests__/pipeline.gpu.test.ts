@@ -128,6 +128,57 @@ describe('develop pipeline (CanvasKit)', () => {
     }
   });
 
+  it('a tiny exposure does not dim the whites', () => {
+    const r = base();
+    r.light.exposure = 0.01;
+    expect(px(render(r), W - 1, 2)[0]).toBeGreaterThanOrEqual(254);
+  });
+
+  it('overexposed colors keep climbing toward white', () => {
+    const at = (ev: number) => {
+      const r = base();
+      r.light.exposure = ev;
+      return px(render(r), 10, 12);
+    };
+    expect(at(5)[1]).toBeGreaterThan(at(2)[1] + 60);
+    expect(at(5)[2]).toBeGreaterThan(at(2)[2] + 60);
+  });
+
+  it.each([
+    ['exposure +5', (r: Recipe) => { r.light.exposure = 5; }],
+    ['shadows +100', (r: Recipe) => { r.light.shadows = 100; }],
+    ['shadows -100', (r: Recipe) => { r.light.shadows = -100; }],
+    ['highlights +100', (r: Recipe) => { r.light.highlights = 100; }],
+    ['highlights -100', (r: Recipe) => { r.light.highlights = -100; }],
+    ['whites -100', (r: Recipe) => { r.light.whites = -100; }],
+    ['contrast -100', (r: Recipe) => { r.light.contrast = -100; }],
+    ['all extremes', (r: Recipe) => { r.light.exposure = 2; r.light.highlights = -100; r.light.shadows = 100; r.light.whites = -100; r.light.blacks = 100; }],
+  ])('%s keeps the tones in order', (_name, edit) => {
+    const r = base();
+    edit(r);
+    const out = render(r);
+    for (let x = 1; x < W; x++) expect(px(out, x, 2)[0]).toBeGreaterThanOrEqual(px(out, x - 1, 2)[0] - 1);
+  });
+
+  it('shadows leave black alone', () => {
+    const r = base();
+    r.light.shadows = 100;
+    expect(px(render(r), 0, 2)[0]).toBeLessThanOrEqual(2);
+  });
+
+  it('mask exposure rolls off into white like the global one', () => {
+    const r = base();
+    const m = createMask('brush', 'b');
+    m.adjust.exposure = 50; // +2 EV
+    r.masks = [m];
+    const tex = new Uint8Array(W * H * 4).fill(255);
+    const out = render(r, { maskTex: tex });
+    const global = base();
+    global.light.exposure = 2;
+    const ref = render(global);
+    for (const x of [20, 40, 50, 60]) expect(Math.abs(px(out, x, 2)[0] - px(ref, x, 2)[0])).toBeLessThanOrEqual(2);
+  });
+
   it('positive contrast spreads tones around mid grey', () => {
     const r = base();
     r.light.contrast = 60;
@@ -302,6 +353,9 @@ const RENDER_CASES: [string, (r: Recipe) => void][] = [
   ['default', () => {}],
   ['exposure', (r) => { r.light.exposure = 0.8; }],
   ['tone', (r) => { r.light.contrast = 45; r.light.highlights = -60; r.light.shadows = 50; r.light.whites = 20; r.light.blacks = -30; }],
+  ['low contrast', (r) => { r.light.contrast = -80; r.light.highlights = 70; r.light.shadows = -60; }],
+  ['overexposed', (r) => { r.light.exposure = 4; }],
+  ['mask overexposed', (r) => { const m = createMask('radial', 'g'); m.adjust.exposure = 100; r.masks = [m]; }],
   ['color', (r) => { r.color.temperature = 40; r.color.tint = -25; r.color.vibrance = 35; r.color.saturation = -20; }],
   ['hsl', (r) => { r.hsl.blue.sat = -70; r.hsl.red.hue = 40; r.hsl.green.lum = 30; }],
   ['curve', (r) => { r.curves.rgb = [{ x: 0, y: 0.1 }, { x: 0.5, y: 0.7 }, { x: 1, y: 0.95 }]; }],

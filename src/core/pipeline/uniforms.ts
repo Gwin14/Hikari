@@ -134,7 +134,8 @@ export function developUniforms(r: Recipe, f: FrameInfo): UniformValues {
     uShadows: shadows,
     uWhites: L.whites / 100,
     uBlacks: L.blacks / 100,
-    uHeadroom: (f.isRaw && r.raw.highlightRecovery) || L.exposure > 0 ? 1 : 0,
+    // brightest linear value after exposure: one stop above 1 survives a RAW decode with recovery
+    uHeadroom: Math.max(1, (f.isRaw && r.raw.highlightRecovery ? 2 : 1) * Math.pow(2, L.exposure)),
     uVibrance: vib,
     uSaturation: sat,
     uHslH: hslH,
