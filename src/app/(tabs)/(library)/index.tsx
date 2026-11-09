@@ -1,19 +1,21 @@
 import { addListener, presentPermissionsPicker, usePermissions } from 'expo-media-library';
-import { router, useFocusEffect } from 'expo-router';
+import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { listAlbums, pairLibraryItems, type AlbumInfo } from '@/core/sources/library';
 import type { PhotoItem } from '@/core/sources/types';
 import { applyFilter, defaultFilter, useLibrary, type ViewFilter } from '@/state/library';
-import { BrowserHeader, FilterBar, SelectionBar } from '@/ui/BrowserChrome';
-import { Button, EmptyState, IconButton } from '@/ui/kit';
-import { PhotoGrid } from '@/ui/PhotoGrid';
-import { colors, common, curve, font, radius, space } from '@/ui/theme';
+import { BrowserToolbar, FilterBar, Notice, SelectionToolbar, useSelectionMode } from '@/ui/BrowserChrome';
+import { useToolbarIcon } from '@/ui/Icon';
+import { Button, EmptyState } from '@/ui/kit';
+import { GridFooter, PhotoGrid } from '@/ui/PhotoGrid';
+import { space, useTheme } from '@/ui/theme';
 
 export default function LibraryScreen() {
   const { t } = useTranslation();
+  const c = useTheme();
   const [permission, requestPermission] = usePermissions({ granularPermissions: ['photo'] });
   const [filter, setFilter] = useState<ViewFilter>(defaultFilter);
   const [albums, setAlbums] = useState<AlbumInfo[]>([]);
@@ -23,7 +25,10 @@ export default function LibraryScreen() {
   const selection = useLibrary((s) => s.selection);
   const selecting = useLibrary((s) => s.selecting);
   const loading = useLibrary((s) => s.libraryLoading);
-  const { loadLibrary, refreshLibrary, setSequence, toggleSelect, setSelecting } = useLibrary.getState();
+  const done = useLibrary((s) => s.libraryDone);
+  const { loadLibrary, refreshLibrary, setSequence, toggleSelect } = useLibrary.getState();
+  const albumsIcon = useToolbarIcon('albums', c.text);
+  useSelectionMode();
 
   const granted = permission?.granted;
   const sort = filter.sort === 'oldest' ? 'oldest' : 'newest';
@@ -45,7 +50,7 @@ export default function LibraryScreen() {
   );
 
   const items = useMemo(() => applyFilter(pairLibraryItems(raw), meta, filter), [raw, meta, filter]);
-  const albumTitle = albumId ? (albums.find((a) => a.id === albumId)?.title ?? t('library.albums')) : t('library.allPhotos');
+  const albumTitle = albumId ? (albums.find((a) => a.id === albumId)?.title ?? t('library.albums')) : t('library.title');
 
   const open = (item: PhotoItem) => {
     if (selecting) return toggleSelect(item.key);
@@ -54,39 +59,23 @@ export default function LibraryScreen() {
   };
 
   // while the permission check resolves, the cached snapshot already fills the grid
-  if (!permission && !raw.length) return <View style={common.screen} />;
   if (permission && !granted) {
     return (
-      <View style={[common.screen, common.center]}>
+      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.centered} style={{ backgroundColor: c.bg }}>
+        <Stack.Title>{t('library.title')}</Stack.Title>
         <EmptyState
-          icon="images-outline"
+          icon="photos"
           title={t('library.permissionTitle')}
           body={t('library.permissionBody')}
           action={<Button primary label={t('library.permissionButton')} onPress={requestPermission} />}
         />
-      </View>
+      </ScrollView>
     );
   }
 
+  // the grid is the screen's first view so the large title collapses with it
   return (
-    <View style={common.screen}>
-      <BrowserHeader
-        title={albumTitle}
-        subtitle={t('folders.items', { count: items.length })}
-        onTitlePress={() => router.push({ pathname: '/albums', params: { sort } })}
-        right={
-          <IconButton
-            icon={selecting ? 'close' : 'checkmark-circle-outline'}
-            onPress={() => setSelecting(!selecting)}
-            label={selecting ? t('common.cancel') : t('common.select')}
-          />
-        }
-      />
-      {permission?.accessPrivileges === 'limited' && (
-        <Pressable onPress={() => presentPermissionsPicker()} style={styles.limited}>
-          <Text style={styles.limitedText}>{t('library.limited')}</Text>
-        </Pressable>
-      )}
+    <>
       <PhotoGrid
         items={items}
         meta={meta}
@@ -95,17 +84,31 @@ export default function LibraryScreen() {
         onPress={open}
         onLongPress={(it) => toggleSelect(it.key)}
         onEndReached={() => loadLibrary(albumId, sort)}
-        header={<FilterBar value={filter} onChange={setFilter} />}
+        header={
+          <View>
+            {permission?.accessPrivileges === 'limited' && <Notice label={t('library.limited')} onPress={() => presentPermissionsPicker()} />}
+            <FilterBar value={filter} onChange={setFilter} />
+          </View>
+        }
+        footer={done || !loading ? <GridFooter label={t('folders.items', { count: items.length })} /> : null}
         loading={loading || !permission}
-        empty={<EmptyState icon="images-outline" title={t('library.empty')} body={t('library.emptyBody')} style={styles.empty} />}
+        empty={<EmptyState icon="photo" title={t('library.empty')} body={t('library.emptyBody')} style={styles.empty} />}
       />
-      <SelectionBar items={items} />
-    </View>
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button
+          icon={albumsIcon}
+          accessibilityLabel={t('library.albums')}
+          hidden={selecting}
+          onPress={() => router.push({ pathname: '/albums', params: { sort } })}
+        />
+      </Stack.Toolbar>
+      <BrowserToolbar title={albumTitle} filter={filter} onFilter={setFilter} items={items} sorts={['newest', 'oldest', 'name']} />
+      <SelectionToolbar items={items} />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   empty: { marginTop: 96 },
-  limited: { marginHorizontal: space.lg, marginBottom: space.sm, padding: space.md, borderRadius: radius.md, ...curve, backgroundColor: colors.accentSoft },
-  limitedText: { color: colors.accent, fontSize: font.sm, fontWeight: '600', textAlign: 'center' },
+  centered: { flexGrow: 1, justifyContent: 'center', paddingVertical: space.xxxl },
 });

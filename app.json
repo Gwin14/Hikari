@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "backgroundColor": "#0B0B0C",
     "ios": {
       "icon": "./assets/AppIcon.icon",

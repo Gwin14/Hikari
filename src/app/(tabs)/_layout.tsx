@@ -1,58 +1,39 @@
-import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { Tabs } from 'expo-router';
+import { NativeTabs } from 'expo-router/native-tabs';
 import { useTranslation } from 'react-i18next';
-import { Platform, StyleSheet } from 'react-native';
 
-import { colors } from '@/ui/theme';
+import { useLibrary } from '@/state/library';
+import { md, sf } from '@/ui/Icon';
+import { useTheme } from '@/ui/theme';
 
-// Android needs a BlurTargetView around the content to blur; there the bar falls back to translucent glass.
-const TabBarBackground = () =>
-  Platform.OS === 'ios' ? (
-    <BlurView tint="systemChromeMaterialDark" intensity={90} style={StyleSheet.absoluteFill} />
-  ) : null;
-
+/** System tab bar (Liquid Glass on iOS 26, Material navigation bar on Android). Each tab owns a stack. */
 export default function TabsLayout() {
   const { t } = useTranslation();
+  const c = useTheme();
+  // multi-select swaps the tab bar for the selection toolbar, like Photos
+  const selecting = useLibrary((s) => s.selecting);
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: {
-          position: 'absolute',
-          backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.glass,
-          borderTopColor: colors.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          elevation: 0,
-        },
-        tabBarBackground: TabBarBackground,
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.textDim,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        sceneStyle: { backgroundColor: colors.bg },
-      }}
+    <NativeTabs
+      hidden={selecting}
+      tintColor={c.accentInk}
+      iconColor={{ default: c.textDim, selected: c.accentInk }}
+      labelStyle={{ default: { color: c.textDim }, selected: { color: c.accentInk } }}
+      indicatorColor={c.accentSoft}
+      // iOS draws its own material; Android gets the surface tone
+      backgroundColor={process.env.EXPO_OS === 'android' ? c.surface : undefined}
+      minimizeBehavior="onScrollDown"
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: t('tabs.library'),
-          tabBarIcon: ({ color, size, focused }) => <Ionicons name={focused ? 'images' : 'images-outline'} color={color as string} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="folders"
-        options={{
-          title: t('tabs.folders'),
-          tabBarIcon: ({ color, size, focused }) => <Ionicons name={focused ? 'folder' : 'folder-outline'} color={color as string} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: t('tabs.settings'),
-          tabBarIcon: ({ color, size, focused }) => <Ionicons name={focused ? 'options' : 'options-outline'} color={color as string} size={size} />,
-        }}
-      />
-    </Tabs>
+      <NativeTabs.Trigger name="(library)">
+        <NativeTabs.Trigger.Icon sf={{ default: sf('library'), selected: sf('libraryFill') }} md={md('library')} />
+        <NativeTabs.Trigger.Label>{t('tabs.library')}</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="(folders)">
+        <NativeTabs.Trigger.Icon sf={{ default: sf('folders'), selected: sf('foldersFill') }} md={md('folders')} />
+        <NativeTabs.Trigger.Label>{t('tabs.folders')}</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="(settings)">
+        <NativeTabs.Trigger.Icon sf={{ default: sf('settings'), selected: sf('settingsFill') }} md={md('settings')} />
+        <NativeTabs.Trigger.Label>{t('tabs.settings')}</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+    </NativeTabs>
   );
 }

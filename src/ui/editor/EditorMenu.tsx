@@ -2,6 +2,7 @@ import { readMetadata, isNativeAvailable, revertLibraryEdit, type PhotoMetadata 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, SlideInDown, useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import * as db from '@/core/db/db';
@@ -9,8 +10,11 @@ import { decodeTarget } from '@/core/image/load';
 import type { RecipeSection } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
 import { useLibrary } from '@/state/library';
-import { Button, ListRow, SectionTitle, ToggleRow } from '../kit';
-import { colors, font, radius, space } from '../theme';
+
+import { Icon } from '../Icon';
+import { Button, Chip, EASE_OUT, Grabber, Group, ListRow, notifySuccess, tick, ToggleRow } from '../kit';
+import { LABEL_COLORS } from '../PhotoGrid';
+import { colors, floating, radius, space, tabular, type } from '../theme';
 import { SectionPicker } from './panels/PresetsPanel';
 
 type Sheet = 'menu' | 'copy' | 'info' | null;
@@ -30,6 +34,7 @@ export function EditorMenu(props: { sheet: Sheet; onSheet(s: Sheet): void; histo
   const [info, setInfo] = useState<PhotoMetadata | null>(null);
   const { copy, paste, resetAll, setTool } = useEditor.getState();
   const { setMeta } = useLibrary.getState();
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     if (sheet === 'info' && recipe && isNativeAvailable) {
@@ -63,116 +68,154 @@ export function EditorMenu(props: { sheet: Sheet; onSheet(s: Sheet): void; histo
     ]);
 
   return (
-    <Modal visible={sheet !== null} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close} />
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + space.md }]}>
+    <Modal visible={sheet !== null} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={close}>
+      <Pressable style={styles.backdrop} onPress={close} accessibilityLabel={t('common.close')} />
+      <Animated.View
+        entering={reduceMotion ? FadeIn.duration(150) : SlideInDown.duration(280).easing(EASE_OUT)}
+        style={[styles.sheet, { paddingBottom: insets.bottom + space.md }]}
+      >
+        <Grabber />
         {sheet === 'menu' && (
-          <ScrollView>
-            <View style={styles.rating}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <Pressable key={n} onPress={() => setMeta(item, { rating: meta?.rating === n ? 0 : n })} hitSlop={6}>
-                  <Text style={[styles.star, (meta?.rating ?? 0) >= n && { color: colors.accent }]}>★</Text>
-                </Pressable>
-              ))}
-              <View style={{ flex: 1 }} />
-              <Pressable onPress={() => setMeta(item, { flag: meta?.flag === 1 ? 0 : 1 })} style={[styles.flag, meta?.flag === 1 && styles.flagOn]}>
-                <Text style={styles.flagText}>{t('culling.pick')}</Text>
-              </Pressable>
-              <Pressable onPress={() => setMeta(item, { flag: meta?.flag === -1 ? 0 : -1 })} style={[styles.flag, meta?.flag === -1 && styles.flagOn]}>
-                <Text style={styles.flagText}>{t('culling.reject')}</Text>
-              </Pressable>
+          <ScrollView contentContainerStyle={styles.menu} bounces={false}>
+            <View style={styles.culling}>
+              <View style={styles.rating} accessibilityRole="adjustable" accessibilityLabel={t('culling.rate')}>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <Pressable
+                    key={n}
+                    hitSlop={4}
+                    style={styles.star}
+                    accessibilityLabel={t('culling.stars', { count: n })}
+                    onPress={() => {
+                      tick();
+                      setMeta(item, { rating: meta?.rating === n ? 0 : n });
+                    }}
+                  >
+                    <Icon name="star" size={24} color={(meta?.rating ?? 0) >= n ? colors.accent : colors.surface3} />
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.flags}>
+                <Chip icon="flag" label={t('culling.pick')} active={meta?.flag === 1} onPress={() => setMeta(item, { flag: meta?.flag === 1 ? 0 : 1 })} />
+                <Chip icon="reject" label={t('culling.reject')} active={meta?.flag === -1} onPress={() => setMeta(item, { flag: meta?.flag === -1 ? 0 : -1 })} />
+              </View>
+              <View style={styles.labels}>
+                {(['red', 'yellow', 'green', 'blue', 'purple'] as const).map((col) => (
+                  <Pressable
+                    key={col}
+                    accessibilityLabel={t(`labels.${col}`)}
+                    accessibilityState={{ selected: meta?.label === col }}
+                    hitSlop={6}
+                    onPress={() => {
+                      tick();
+                      setMeta(item, { label: meta?.label === col ? null : col });
+                    }}
+                    style={[styles.labelRing, meta?.label === col && styles.labelOn]}
+                  >
+                    <View style={[styles.labelDot, { backgroundColor: LABEL_COLORS[col] }]} />
+                  </Pressable>
+                ))}
+              </View>
             </View>
-            <View style={styles.labels}>
-              {(['red', 'yellow', 'green', 'blue', 'purple'] as const).map((c) => (
-                <Pressable
-                  key={c}
-                  onPress={() => setMeta(item, { label: meta?.label === c ? null : c })}
-                  style={[styles.labelDot, { backgroundColor: LABELS[c] }, meta?.label === c && styles.labelOn]}
-                />
-              ))}
-            </View>
-            <ListRow icon="copy-outline" label={t('editor.copy')} onPress={() => onSheet('copy')} />
-            <ListRow
-              icon="clipboard-outline"
-              label={t('editor.paste')}
-              onPress={
-                clipboard
-                  ? () => {
-                      paste();
-                      close();
-                    }
-                  : undefined
-              }
-            />
-            <ListRow
-              icon="git-branch-outline"
-              label={t('tools.versions')}
-              onPress={() => {
-                setTool('versions');
-                close();
-              }}
-            />
-            <ListRow icon="information-circle-outline" label={t('editor.info')} onPress={() => onSheet('info')} />
-            <ToggleRow icon="bar-chart-outline" label={t('editor.histogram')} value={props.histogram} onChange={props.onHistogram} />
-            <ListRow
-              icon="refresh-outline"
-              label={t('editor.resetAll')}
-              onPress={() => {
-                resetAll();
-                close();
-              }}
-            />
-            <ListRow icon="arrow-undo-outline" label={t('editor.revertOriginal')} destructive onPress={revert} />
+            <Group>
+              <ListRow icon="copy" label={t('editor.copy')} onPress={() => onSheet('copy')} />
+              <ListRow
+                icon="paste"
+                label={t('editor.paste')}
+                onPress={
+                  clipboard
+                    ? () => {
+                        paste();
+                        close();
+                      }
+                    : undefined
+                }
+              />
+              <ListRow
+                icon="toolVersions"
+                label={t('tools.versions')}
+                onPress={() => {
+                  setTool('versions');
+                  close();
+                }}
+              />
+            </Group>
+            <Group>
+              <ListRow icon="info" label={t('editor.info')} onPress={() => onSheet('info')} />
+              <ToggleRow icon="histogram" label={t('editor.histogram')} value={props.histogram} onChange={props.onHistogram} />
+            </Group>
+            <Group>
+              <ListRow
+                icon="reset"
+                label={t('editor.resetAll')}
+                chevron={false}
+                onPress={() => {
+                  resetAll();
+                  close();
+                }}
+              />
+              <ListRow icon="undo" label={t('editor.revertOriginal')} destructive chevron={false} onPress={revert} />
+            </Group>
           </ScrollView>
         )}
         {sheet === 'copy' && (
-          <View style={{ padding: space.lg, gap: space.md }}>
+          <View style={{ padding: space.lg, gap: space.lg }}>
             <Text style={styles.title}>{t('editor.copy')}</Text>
             <SectionPicker value={sections} onChange={setSections} />
             <Button
               primary
+              icon="copy"
               label={t('editor.copy')}
               onPress={() => {
                 copy(sections);
+                notifySuccess();
                 close();
               }}
             />
           </View>
         )}
         {sheet === 'info' && (
-          <ScrollView style={{ maxHeight: 480 }}>
-            <SectionTitle title={t('editor.info')} />
-            <InfoRow label={t('info.file')} value={recipe.source.filename} />
-            {info && (
-              <>
-                <InfoRow label={t('info.camera')} value={[info.make, info.model].filter(Boolean).join(' ')} />
-                <InfoRow label={t('info.lens')} value={info.lens} />
-                <InfoRow
-                  label={t('info.exposure')}
-                  value={[
-                    info.exposureTime ? (info.exposureTime < 1 ? `1/${Math.round(1 / info.exposureTime)}s` : `${info.exposureTime}s`) : null,
-                    info.fNumber ? `ƒ/${info.fNumber}` : null,
-                    info.iso ? `ISO ${info.iso}` : null,
-                    info.focalLength ? `${Math.round(info.focalLength)}mm` : null,
-                    info.exposureBias ? `${info.exposureBias > 0 ? '+' : ''}${info.exposureBias.toFixed(1)} EV` : null,
-                  ]
-                    .filter(Boolean)
-                    .join('  ·  ')}
-                />
-                <InfoRow label={t('info.dimensions')} value={`${info.width} × ${info.height} · ${((info.width * info.height) / 1e6).toFixed(1)} MP`} />
-                <InfoRow label={t('info.date')} value={info.dateTaken} />
-                <InfoRow label={t('info.profile')} value={[info.colorProfile, info.isRaw ? (info.isProRaw ? 'ProRAW' : 'RAW') : null].filter(Boolean).join(' · ')} />
-                {info.latitude != null && <InfoRow label={t('info.location')} value={`${info.latitude.toFixed(5)}, ${info.longitude?.toFixed(5)}`} />}
-              </>
-            )}
+          <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={styles.menu}>
+            <Text style={styles.title}>{t('editor.info')}</Text>
+            <Group>
+              {(
+                [
+                  [t('info.file'), recipe.source.filename],
+                  ...(info
+                    ? [
+                        [t('info.camera'), [info.make, info.model].filter(Boolean).join(' ')],
+                        [t('info.lens'), info.lens],
+                        [
+                          t('info.exposure'),
+                          [
+                            info.exposureTime ? (info.exposureTime < 1 ? `1/${Math.round(1 / info.exposureTime)}s` : `${info.exposureTime}s`) : null,
+                            info.fNumber ? `ƒ/${info.fNumber}` : null,
+                            info.iso ? `ISO ${info.iso}` : null,
+                            info.focalLength ? `${Math.round(info.focalLength)}mm` : null,
+                            info.exposureBias ? `${info.exposureBias > 0 ? '+' : ''}${info.exposureBias.toFixed(1)} EV` : null,
+                          ]
+                            .filter(Boolean)
+                            .join('  ·  '),
+                        ],
+                        [t('info.dimensions'), `${info.width} × ${info.height} · ${((info.width * info.height) / 1e6).toFixed(1)} MP`],
+                        [t('info.date'), info.dateTaken],
+                        [t('info.profile'), [info.colorProfile, info.isRaw ? (info.isProRaw ? 'ProRAW' : 'RAW') : null].filter(Boolean).join(' · ')],
+                        [t('info.location'), info.latitude != null ? `${info.latitude.toFixed(5)}, ${info.longitude?.toFixed(5)}` : null],
+                      ]
+                    : []),
+                ] as [string, string | null | undefined][]
+              )
+                .filter(([, v]) => !!v)
+                .map(([label, value]) => (
+                  <InfoRow key={label} label={label} value={value} />
+                ))}
+            </Group>
           </ScrollView>
         )}
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
 
-const LABELS = { red: '#FF5A5F', yellow: '#FFD23F', green: '#4CD07D', blue: '#4D9BFF', purple: '#B57BFF' } as const;
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
@@ -188,17 +231,29 @@ function InfoRow({ label, value }: { label: string; value?: string | null }) {
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: colors.overlay },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: space.sm, maxHeight: '75%' },
-  title: { color: colors.text, fontSize: font.lg, fontWeight: '700' },
-  rating: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: space.lg, paddingVertical: space.md },
-  star: { color: colors.surface3, fontSize: 28 },
-  flag: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surface2 },
-  flagOn: { backgroundColor: colors.accent },
-  flagText: { color: colors.text, fontSize: font.sm, fontWeight: '600' },
-  labels: { flexDirection: 'row', gap: 14, paddingHorizontal: space.lg, paddingBottom: space.md },
-  labelDot: { width: 24, height: 24, borderRadius: 12, opacity: 0.6 },
-  labelOn: { opacity: 1, borderWidth: 2, borderColor: colors.text },
-  infoRow: { paddingHorizontal: space.lg, paddingVertical: space.sm },
-  infoLabel: { color: colors.textFaint, fontSize: font.xs, textTransform: 'uppercase', letterSpacing: 0.6 },
-  infoValue: { color: colors.text, fontSize: font.md, marginTop: 2 },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '80%',
+    backgroundColor: colors.panel,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
+    borderCurve: 'continuous',
+    boxShadow: floating,
+  },
+  menu: { padding: space.lg, gap: space.lg },
+  title: { color: colors.text, ...type.title3 },
+  culling: { gap: space.md, alignItems: 'center' },
+  rating: { flexDirection: 'row', gap: space.xs },
+  star: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  flags: { flexDirection: 'row', gap: space.sm },
+  labels: { flexDirection: 'row', gap: space.md },
+  labelRing: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'transparent' },
+  labelOn: { borderColor: colors.text },
+  labelDot: { width: 22, height: 22, borderRadius: 11 },
+  infoRow: { paddingHorizontal: space.lg, paddingVertical: space.md - 2, gap: 2 },
+  infoLabel: { color: colors.textDim, ...type.footnote },
+  infoValue: { color: colors.text, ...type.body, ...tabular },
 });

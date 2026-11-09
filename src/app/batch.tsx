@@ -1,5 +1,5 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { router, Stack, useLocalSearchParams, usePreventRemove } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,21 +11,30 @@ import { listPresets } from '@/core/recipe/presetStore';
 import type { RecipeSettings } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
 import { findItems, useLibrary } from '@/state/library';
-import { Button, Chip, ChipRow, IconButton, notifySuccess, ProgressBar, SectionTitle } from '@/ui/kit';
-import { colors, common, font, space } from '@/ui/theme';
+import { Button, EmptyState, Group, ListRow, notifySuccess, ProgressBar } from '@/ui/kit';
+import { space, tabular, type, useStyles, useTheme, type Palette } from '@/ui/theme';
 
 /** Apply copied edits or a preset to many photos at once (non-destructive, catalog only). */
 export default function BatchScreen() {
   const { t } = useTranslation();
+  const c = useTheme();
+  const s = useStyles(makeStyles);
   const insets = useSafeAreaInsets();
   const { keys } = useLocalSearchParams<{ keys: string }>();
   const items = useMemo(() => findItems((keys ?? '').split('\n').filter(Boolean)), [keys]);
-  const clipboard = useEditor((s) => s.clipboard);
+  const clipboard = useEditor((st) => st.clipboard);
   const presets = useMemo(() => listPresets(), []);
-  const [choice, setChoice] = useState<{ name: string; settings: Partial<RecipeSettings> } | null>(
-    clipboard ? { name: t('editor.paste'), settings: clipboard.settings } : null,
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof presets>();
+    for (const p of presets) m.set(p.group, [...(m.get(p.group) ?? []), p]);
+    return [...m.entries()];
+  }, [presets]);
+  const [choice, setChoice] = useState<{ id: string; name: string; settings: Partial<RecipeSettings> } | null>(
+    clipboard ? { id: 'clipboard', name: t('editor.paste'), settings: clipboard.settings } : null,
   );
   const [done, setDone] = useState<number | null>(null);
+  const [finished, setFinished] = useState(false);
+  usePreventRemove(done !== null && !finished, () => {});
 
   const run = async () => {
     if (!choice) return;
@@ -43,59 +52,81 @@ export default function BatchScreen() {
     }
     useLibrary.getState().refreshMeta(items.map((i) => i.key));
     useLibrary.getState().clearSelection();
-    notifySuccess();
-    router.back();
+    setFinished(true);
   };
 
+  useEffect(() => {
+    if (!finished) return;
+    notifySuccess();
+    router.back();
+  }, [finished]);
+
+  const title = t('batch.title', { count: items.length });
+
   return (
-    <View style={[common.screen, { paddingTop: space.md }]}>
-      <View style={styles.header}>
-        <IconButton icon="close" onPress={() => router.back()} label={t('common.close')} style={styles.side} />
-        <Text style={styles.title}>{t('common.selected', { count: items.length })}</Text>
-        <View style={styles.side} />
-      </View>
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <Stack.Title>{title}</Stack.Title>
+      <Stack.Toolbar placement="left">
+        <Stack.Toolbar.Button onPress={() => router.back()} disabled={done !== null}>
+          {t('common.cancel')}
+        </Stack.Toolbar.Button>
+      </Stack.Toolbar>
       {done !== null ? (
-        <View style={[common.center, styles.progress]}>
-          <Text style={[common.text, styles.progressText]}>
-            {done}/{items.length}
-          </Text>
+        <View style={s.progress}>
+          <Text style={s.progressCount}>{t('batch.applying', { done, total: items.length })}</Text>
           <ProgressBar value={items.length ? done / items.length : 0} />
         </View>
+      ) : !clipboard && presets.length === 0 ? (
+        <View style={s.progress}>
+          <EmptyState icon="paste" title={t('batch.emptyTitle')} body={t('batch.emptyBody')} />
+        </View>
       ) : (
-        <ScrollView>
+        <ScrollView contentContainerStyle={[s.content, { paddingBottom: insets.bottom + 112 }]}>
+          <Text style={s.lead}>{t('batch.lead')}</Text>
           {clipboard && (
-            <>
-              <SectionTitle title={t('editor.paste')} />
-              <ChipRow>
-                <Chip
-                  icon="clipboard"
-                  label={clipboard.sections.map((s) => t(`sections.${s}`)).join(', ')}
-                  active={choice?.settings === clipboard.settings}
-                  onPress={() => setChoice({ name: t('editor.paste'), settings: clipboard.settings })}
-                />
-              </ChipRow>
-            </>
+            <Group title={t('editor.paste')}>
+              <ListRow
+                icon="paste"
+                label={t('batch.copiedEdits')}
+                hint={clipboard.sections.map((sec) => t(`sections.${sec}`)).join(', ')}
+                selected={choice?.id === 'clipboard'}
+                onPress={() => setChoice({ id: 'clipboard', name: t('editor.paste'), settings: clipboard.settings })}
+              />
+            </Group>
           )}
-          <SectionTitle title={t('presets.title')} />
-          <View style={styles.wrap}>
-            {presets.map((p) => (
-              <Chip key={p.id} label={p.name} active={choice?.settings === p.settings} onPress={() => setChoice({ name: p.name, settings: p.settings })} />
-            ))}
-          </View>
+          {groups.map(([group, list]) => (
+            <Group key={group} title={group === 'mine' ? t('presets.mine') : group}>
+              {list.map((p) => (
+                <ListRow key={p.id} label={p.name} selected={choice?.id === p.id} onPress={() => setChoice({ id: p.id, name: p.name, settings: p.settings })} />
+              ))}
+            </Group>
+          ))}
         </ScrollView>
       )}
-      <View style={{ padding: space.lg, paddingBottom: insets.bottom + space.md }}>
-        <Button primary label={choice ? `${t('common.apply')} · ${choice.name}` : t('common.apply')} disabled={!choice || done !== null} onPress={run} />
-      </View>
+      {done === null && (
+        <View style={[s.footer, { paddingBottom: insets.bottom + space.md }]}>
+          <Button primary label={choice ? t('batch.apply', { name: choice.name }) : t('common.apply')} disabled={!choice || !items.length} onPress={run} />
+        </View>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm },
-  side: { width: 44 },
-  progress: { flex: 1, paddingHorizontal: space.xl * 2, gap: space.md },
-  progressText: { fontWeight: '600', fontVariant: ['tabular-nums'] },
-  title: { flex: 1, textAlign: 'center', color: colors.text, fontSize: font.lg, fontWeight: '700' },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg },
-});
+const makeStyles = (c: Palette) =>
+  StyleSheet.create({
+    content: { padding: space.lg, gap: space.xxl },
+    lead: { color: c.textDim, ...type.subhead, paddingHorizontal: space.xs },
+    progress: { flex: 1, justifyContent: 'center', paddingHorizontal: space.xxxl * 1.5, gap: space.md },
+    progressCount: { color: c.text, ...type.headline, textAlign: 'center', ...tabular },
+    footer: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingHorizontal: space.lg,
+      paddingTop: space.md,
+      backgroundColor: c.bg,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: c.separator,
+    },
+  });

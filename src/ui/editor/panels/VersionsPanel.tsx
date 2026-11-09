@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +7,7 @@ import { isEdited } from '@/core/recipe/ops';
 import type { Recipe } from '@/core/recipe/schema';
 import { matchingVersion, nextVersionName } from '@/core/recipe/versions';
 import { useEditor } from '@/state/editor';
+import { Icon } from '../../Icon';
 import { Button, Chip, ChipRow, tick } from '../../kit';
 import { colors, font, radius, space } from '../../theme';
 
@@ -99,7 +99,7 @@ function Row(p: { thumb?: string | null; title: string; subtitle: string; active
         {p.thumb ? (
           <Image source={{ uri: p.thumb }} style={StyleSheet.absoluteFill} contentFit="cover" />
         ) : (
-          <Ionicons name={p.onMore ? 'image-outline' : 'aperture-outline'} size={20} color={colors.textFaint} />
+          <Icon name={p.onMore ? 'photo' : 'toolOptics'} size={20} color={colors.textFaint} />
         )}
       </View>
       <View style={{ flex: 1 }}>
@@ -110,10 +110,10 @@ function Row(p: { thumb?: string | null; title: string; subtitle: string; active
           {p.subtitle}
         </Text>
       </View>
-      {p.active && <Ionicons name="checkmark-circle" size={20} color={colors.accent} />}
+      {p.active && <Icon name="checkCircle" size={20} color={colors.accent} />}
       {p.onMore && (
         <Pressable onPress={p.onMore} hitSlop={10} style={styles.more}>
-          <Ionicons name="ellipsis-horizontal" size={18} color={colors.textDim} />
+          <Icon name="more" size={18} color={colors.textDim} />
         </Pressable>
       )}
     </Pressable>
@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
     marginHorizontal: space.lg,
     marginVertical: space.xs,
     padding: space.sm,
-    borderRadius: radius.md,
+    borderRadius: radius.tile,
     backgroundColor: colors.surface2,
     borderWidth: 1.5,
     borderColor: 'transparent',
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
   thumb: {
     width: 48,
     height: 48,
-    borderRadius: radius.sm,
+    borderRadius: radius.tile,
     overflow: 'hidden',
     backgroundColor: colors.surface3,
     alignItems: 'center',
@@ -176,8 +176,8 @@ const styles = StyleSheet.create({
   more: { padding: space.xs },
   empty: { color: colors.textDim, fontSize: font.sm, textAlign: 'center', padding: space.lg },
   backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: space.xl },
-  dialog: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: space.lg, gap: space.md },
+  dialog: { backgroundColor: colors.surface, borderRadius: radius.card, padding: space.lg, gap: space.md },
   dialogTitle: { color: colors.text, fontSize: font.lg, fontWeight: '700' },
-  input: { backgroundColor: colors.surface2, color: colors.text, borderRadius: radius.md, padding: space.md, fontSize: font.md },
+  input: { backgroundColor: colors.surface2, color: colors.text, borderRadius: radius.tile, padding: space.md, fontSize: font.md },
   buttons: { flexDirection: 'row', gap: space.md, marginTop: space.sm },
 });

@@ -75,12 +75,12 @@ export function GeometryPanel({ recipe }: { recipe: Recipe }) {
   return (
     <>
       <View style={styles.actions}>
-        <IconButton icon="refresh" onPress={rotate} label={t('geometry.rotateLeft')} />
-        <IconButton icon="swap-horizontal" active={g.flipH} onPress={() => update((r) => ({ ...r, geometry: { ...r.geometry, flipH: !r.geometry.flipH } }))} />
-        <IconButton icon="swap-vertical" active={g.flipV} onPress={() => update((r) => ({ ...r, geometry: { ...r.geometry, flipV: !r.geometry.flipV } }))} />
+        <IconButton icon="rotate" onPress={rotate} label={t('geometry.rotateLeft')} />
+        <IconButton icon="flipH" label={t('geometry.flipH')} active={g.flipH} onPress={() => update((r) => ({ ...r, geometry: { ...r.geometry, flipH: !r.geometry.flipH } }))} />
+        <IconButton icon="flipV" label={t('geometry.flipV')} active={g.flipV} onPress={() => update((r) => ({ ...r, geometry: { ...r.geometry, flipV: !r.geometry.flipV } }))} />
         <View style={{ flex: 1 }} />
         <IconButton
-          icon="scan-outline"
+          icon="reset"
           onPress={() => update((r) => ({ ...r, geometry: { ...r.geometry, crop: { x: 0, y: 0, w: 1, h: 1 }, aspect: null, straighten: 0, perspectiveH: 0, perspectiveV: 0 } }))}
           label={t('geometry.resetCrop')}
         />

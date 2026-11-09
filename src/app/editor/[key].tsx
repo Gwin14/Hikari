@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { StatusBar } from 'expo-status-bar';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -33,9 +34,9 @@ import { MasksPanel, useBrush } from '@/ui/editor/panels/MasksPanel';
 import { PresetsPanel } from '@/ui/editor/panels/PresetsPanel';
 import { RetouchPanel } from '@/ui/editor/panels/RetouchPanel';
 import { VersionsPanel } from '@/ui/editor/panels/VersionsPanel';
-import { ToolBar } from '@/ui/editor/ToolBar';
-import { Button, IconButton, tick } from '@/ui/kit';
-import { colors, common, curve, font, radius, space } from '@/ui/theme';
+import { toolMeta, ToolBar } from '@/ui/editor/ToolBar';
+import { Button, IconButton, PressableScale, tick } from '@/ui/kit';
+import { colors, common, curve, radius, raised, space, tabular, ThemeProvider, type } from '@/ui/theme';
 
 export default function EditorScreen() {
   const { t } = useTranslation();
@@ -82,7 +83,7 @@ export default function EditorScreen() {
   const leave = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
   const landscape = width > height;
-  const panelHeight = landscape ? undefined : Math.round(height * 0.34);
+  const panelHeight = landscape ? undefined : Math.round(height * 0.36);
   const showRaw = !!item && (hasRaw(item) || hasPair || !!recipe?.source.isRaw);
 
   const go = (d: number) => {
@@ -146,93 +147,156 @@ export default function EditorScreen() {
     );
   }
 
-  return (
-    <View style={[common.screen, { paddingTop: insets.top }]}>
-      <View style={styles.top}>
-        <IconButton icon="chevron-back" size={26} onPress={leave} label={t('common.close')} />
-        <IconButton icon="arrow-undo" disabled={!past} onPress={undo} label={t('editor.undo')} />
-        <IconButton icon="arrow-redo" disabled={!future} onPress={redo} label={t('editor.redo')} />
-        <View
-          style={styles.titleBlock}
-          accessible
-          accessibilityRole="adjustable"
-          accessibilityLabel={item.filename}
-          accessibilityValue={{ text: t('editor.position', { n: index + 1, total: sequence.length }) }}
-          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-          onAccessibilityAction={(e) => go(e.nativeEvent.actionName === 'increment' ? 1 : -1)}
-        >
-          <Text style={styles.name} numberOfLines={1} ellipsizeMode="middle">
-            {item.filename}
-          </Text>
-          <Text style={styles.position} numberOfLines={1}>
-            {sequence.length > 1 ? t('editor.position', { n: index + 1, total: sequence.length }) : ''}
-            {item.pair || hasPair ? `${sequence.length > 1 ? ' · ' : ''}RAW+JPEG` : ''}
-          </Text>
-        </View>
-        {fromKomorebi && <IconButton icon="camera-outline" onPress={() => returnToKomorebi(item.id)} label={t('komorebi.back')} />}
-        <IconButton icon="git-compare-outline" active={compare === 'split'} onPress={() => setCompare(compare === 'split' ? 'off' : 'split')} label={t('editor.split')} />
-        <IconButton icon="ellipsis-horizontal-circle" onPress={() => setSheet('menu')} label={t('editor.more')} />
-        <IconButton icon="share-outline" active onPress={() => router.push({ pathname: '/export', params: { keys: item.key } })} label={t('export.title')} />
-      </View>
+  const tool_ = toolMeta(tool);
+  const exportLabel = t('export.title');
 
-      <View style={[styles.body, landscape && { flexDirection: 'row' }]}>
-        <View style={{ flex: 1 }}>
-          <EditorCanvas brush={brush} onSwipe={go} />
-          {!ready && previewUri && (
-            // the grid thumbnail stands in (already in memory) while the full preview decodes
-            <Animated.View style={[StyleSheet.absoluteFill, styles.preview]} exiting={FadeOut.duration(180)} pointerEvents="none">
-              <Image source={{ uri: previewUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" priority="high" />
-            </Animated.View>
-          )}
-          {showHist && (
-            <View style={styles.hist} pointerEvents="box-none">
-              <HistogramView histogram={histogram} />
-            </View>
-          )}
-          {loading && (
-            <Animated.View entering={FadeIn.delay(150)} exiting={FadeOut} style={styles.loadingPill} pointerEvents="none">
-              <ActivityIndicator size="small" color={colors.accent} />
-              {hasRaw(item) && <Text style={styles.loading}>{t('editor.unsavedRaw')}</Text>}
-            </Animated.View>
-          )}
-          {error && (
-            <View style={[StyleSheet.absoluteFill, common.center]} pointerEvents="none">
-              <Text style={styles.error}>{error}</Text>
-            </View>
-          )}
+  return (
+    <ThemeProvider scheme="dark">
+      <StatusBar style="light" />
+      <View style={[common.screen, { backgroundColor: colors.canvas, paddingTop: insets.top }]}>
+        <View style={styles.top}>
+          <IconButton icon="close" size={20} onPress={leave} label={t('common.close')} />
+          <View
+            style={styles.titleBlock}
+            accessible
+            accessibilityRole="adjustable"
+            accessibilityLabel={item.filename}
+            accessibilityValue={{ text: t('editor.position', { n: index + 1, total: sequence.length }) }}
+            accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+            onAccessibilityAction={(e) => go(e.nativeEvent.actionName === 'increment' ? 1 : -1)}
+          >
+            <Text style={styles.name} numberOfLines={1} ellipsizeMode="middle">
+              {item.filename}
+            </Text>
+            {(sequence.length > 1 || item.pair || hasPair) && (
+              <Text style={styles.position} numberOfLines={1}>
+                {sequence.length > 1 ? t('editor.position', { n: index + 1, total: sequence.length }) : ''}
+                {item.pair || hasPair ? `${sequence.length > 1 ? ' · ' : ''}RAW+JPEG` : ''}
+              </Text>
+            )}
+          </View>
+          {fromKomorebi && <IconButton icon="camera" onPress={() => returnToKomorebi(item.id)} label={t('komorebi.back')} />}
+          <IconButton icon="more" onPress={() => setSheet('menu')} label={t('editor.more')} />
+          <PressableScale
+            accessibilityRole="button"
+            accessibilityLabel={exportLabel}
+            onPress={() => router.push({ pathname: '/export', params: { keys: item.key } })}
+            style={styles.export}
+          >
+            <Text style={styles.exportText}>{exportLabel}</Text>
+          </PressableScale>
         </View>
-        <View style={[styles.panel, landscape ? { width: 360 } : { height: panelHeight }]}>
-          <View style={styles.grabber} />
-          <PanelScroll>{panel}</PanelScroll>
+
+        <View style={[styles.body, landscape && { flexDirection: 'row' }]}>
+          <View style={{ flex: 1 }}>
+            <EditorCanvas brush={brush} onSwipe={go} />
+            {!ready && previewUri && (
+              // the grid thumbnail stands in (already in memory) while the full preview decodes
+              <Animated.View style={[StyleSheet.absoluteFill, styles.preview]} exiting={FadeOut.duration(180)} pointerEvents="none">
+                <Image source={{ uri: previewUri }} style={StyleSheet.absoluteFill} contentFit="contain" cachePolicy="memory-disk" priority="high" />
+              </Animated.View>
+            )}
+            {showHist && (
+              <View style={styles.hist} pointerEvents="box-none">
+                <HistogramView histogram={histogram} />
+              </View>
+            )}
+            {loading && (
+              <Animated.View entering={FadeIn.delay(150).duration(180)} exiting={FadeOut.duration(120)} style={styles.loadingPill} pointerEvents="none">
+                <ActivityIndicator size="small" color={colors.text} />
+                {hasRaw(item) && <Text style={styles.loading}>{t('editor.unsavedRaw')}</Text>}
+              </Animated.View>
+            )}
+            {error && (
+              <View style={[StyleSheet.absoluteFill, common.center]} pointerEvents="none">
+                <Text style={styles.error}>{error}</Text>
+              </View>
+            )}
+            {/* history and compare float over the photo's bottom edge, out of the panel's way */}
+            <View style={styles.canvasBar} pointerEvents="box-none">
+              <View style={styles.capsule}>
+                <IconButton icon="undo" size={18} disabled={!past} onPress={undo} label={t('editor.undo')} style={styles.capsuleBtn} />
+                <View style={styles.capsuleDivider} />
+                <IconButton icon="redo" size={18} disabled={!future} onPress={redo} label={t('editor.redo')} style={styles.capsuleBtn} />
+              </View>
+              <IconButton
+                icon="compare"
+                variant="glass"
+                active={compare === 'split'}
+                onPress={() => setCompare(compare === 'split' ? 'off' : 'split')}
+                label={t('editor.split')}
+              />
+            </View>
+          </View>
+          <View style={[styles.panel, landscape ? styles.panelSide : { height: panelHeight }]}>
+            <View style={styles.panelHeader}>
+              <Text style={styles.panelTitle} accessibilityRole="header">
+                {t(tool_.label)}
+              </Text>
+            </View>
+            <PanelScroll>{panel}</PanelScroll>
+          </View>
         </View>
+        <View style={[styles.tools, { paddingBottom: Math.max(insets.bottom, space.sm) }]}>
+          <ToolBar value={tool} onChange={onTool} showRaw={showRaw} />
+        </View>
+        <EditorMenu sheet={sheet} onSheet={setSheet} histogram={showHist} onHistogram={setShowHist} />
       </View>
-      <View style={[styles.tools, { paddingBottom: insets.bottom }]}>
-        <ToolBar value={tool} onChange={onTool} showRaw={showRaw} />
-      </View>
-      <EditorMenu sheet={sheet} onSheet={setSheet} histogram={showHist} onHistogram={setShowHist} />
-    </View>
+    </ThemeProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.sm, height: 52 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.sm, height: 52 },
   titleBlock: { flex: 1, alignItems: 'center', paddingHorizontal: space.xs },
-  name: { color: colors.text, fontSize: font.sm, fontWeight: '600', textAlign: 'center' },
-  position: { color: colors.textDim, fontSize: font.xs, fontWeight: '500', marginTop: 1, fontVariant: ['tabular-nums'] },
-  body: { flex: 1 },
-  preview: { backgroundColor: colors.bg },
-  hist: { position: 'absolute', top: space.sm, left: space.sm },
-  panel: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
+  name: { color: colors.text, ...type.subhead, fontWeight: '600', textAlign: 'center' },
+  position: { color: colors.textDim, ...type.caption2, marginTop: 1, ...tabular },
+  export: {
+    height: 34,
+    paddingHorizontal: space.lg,
+    marginLeft: space.xs,
+    borderRadius: radius.pill,
     ...curve,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  grabber: { alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: colors.surface3, marginTop: space.sm },
-  tools: { backgroundColor: colors.surface },
-  error: { color: colors.danger, fontSize: font.md, padding: space.xl, textAlign: 'center' },
+  exportText: { color: colors.onAccent, ...type.subhead, fontWeight: '700' },
+  body: { flex: 1 },
+  preview: { backgroundColor: colors.canvas },
+  hist: { position: 'absolute', top: space.sm, left: space.sm },
+  canvasBar: {
+    position: 'absolute',
+    left: space.md,
+    right: space.md,
+    bottom: space.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  capsule: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 40,
+    paddingHorizontal: space.xs,
+    borderRadius: radius.pill,
+    ...curve,
+    backgroundColor: colors.glass,
+    boxShadow: raised,
+  },
+  capsuleBtn: { width: 40, height: 40 },
+  capsuleDivider: { width: StyleSheet.hairlineWidth, height: 18, backgroundColor: colors.separator },
+  panel: {
+    backgroundColor: colors.panel,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
+    ...curve,
+  },
+  panelSide: { width: 360, borderTopRightRadius: 0, borderBottomLeftRadius: radius.sheet },
+  panelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingTop: space.md, paddingBottom: space.xs },
+  panelTitle: { color: colors.text, ...type.headline },
+  tools: { backgroundColor: colors.panel, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  error: { color: colors.danger, ...type.subhead, padding: space.xl, textAlign: 'center' },
   loadingPill: {
     position: 'absolute',
     top: space.md,
@@ -241,10 +305,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: space.sm,
     paddingHorizontal: space.md,
-    paddingVertical: 8,
+    height: 34,
     borderRadius: radius.pill,
     ...curve,
     backgroundColor: colors.glass,
   },
-  loading: { color: colors.textDim, fontSize: font.xs },
+  loading: { color: colors.text, ...type.footnote, fontWeight: '500' },
 });

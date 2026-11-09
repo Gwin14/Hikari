@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -6,6 +5,7 @@ import type { SharedValue } from 'react-native-reanimated';
 
 import type { Recipe } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
+import { Icon } from '../../Icon';
 import { Chip, SectionTitle, ToggleRow } from '../../kit';
 import { Slider } from '../../Slider';
 import { colors, font, radius, space } from '../../theme';
@@ -46,7 +46,7 @@ export function RetouchPanel({ recipe, brush }: { recipe: Recipe; brush: SharedV
       <SectionTitle
         title={t('retouch.spots', { count: recipe.retouch.length })}
         right={
-          recipe.retouch.length > 0 ? <Chip icon="trash-outline" label={t('retouch.clear')} color={colors.danger} onPress={clearRetouch} /> : undefined
+          recipe.retouch.length > 0 ? <Chip icon="trash" label={t('retouch.clear')} color={colors.danger} onPress={clearRetouch} /> : undefined
         }
       />
       {recipe.retouch.length === 0 ? (
@@ -55,10 +55,10 @@ export function RetouchPanel({ recipe, brush }: { recipe: Recipe; brush: SharedV
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.list}>
           {recipe.retouch.map((spot, i) => (
             <View key={spot.id} style={styles.spot}>
-              <Ionicons name={spot.objectAware ? 'scan-outline' : 'bandage-outline'} size={18} color={colors.text} />
+              <Icon name={spot.objectAware ? 'maskObject' : 'toolRetouch'} size={18} color={colors.text} />
               <Text style={styles.spotName}>{t('retouch.spot', { n: i + 1 })}</Text>
               <Pressable hitSlop={10} onPress={() => removeRetouch(spot.id)} accessibilityLabel={t('common.delete')}>
-                <Ionicons name="close-circle" size={18} color={colors.textDim} />
+                <Icon name="reject" size={18} color={colors.textDim} />
               </Pressable>
             </View>
           ))}
@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    borderRadius: radius.md,
+    borderRadius: radius.tile,
     backgroundColor: colors.surface2,
   },
   spotName: { color: colors.text, fontSize: font.sm },

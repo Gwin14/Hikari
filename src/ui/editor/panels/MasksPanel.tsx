@@ -1,4 +1,3 @@
-import { Ionicons } from '@expo/vector-icons';
 import { isNativeAvailable } from 'hikari-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,23 +7,24 @@ import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { isAiMask } from '@/core/pipeline/masks';
 import type { Mask, MaskType, Recipe } from '@/core/recipe/schema';
 import { useEditor } from '@/state/editor';
-import { Chip, ChipRow, IconButton, SectionTitle, ToggleRow, type IconName } from '../../kit';
+import { Icon, type IconName } from '../../Icon';
+import { Chip, ChipRow, IconButton, SectionTitle, ToggleRow } from '../../kit';
 import { Slider } from '../../Slider';
 import { colors, font, radius, space } from '../../theme';
 import type { BrushSettings } from '../EditorCanvas';
 import { bipolar, Sliders, unipolar } from './common';
 
 const KINDS: { type: MaskType; icon: IconName; ai?: boolean }[] = [
-  { type: 'subject', icon: 'person-circle-outline', ai: true },
-  { type: 'sky', icon: 'cloud-outline', ai: true },
-  { type: 'background', icon: 'image-outline', ai: true },
-  { type: 'person', icon: 'people-outline', ai: true },
-  { type: 'object', icon: 'scan-outline', ai: true },
-  { type: 'brush', icon: 'brush-outline' },
-  { type: 'linear', icon: 'reorder-four-outline' },
-  { type: 'radial', icon: 'radio-button-off-outline' },
-  { type: 'luminance', icon: 'contrast-outline' },
-  { type: 'color', icon: 'color-palette-outline' },
+  { type: 'subject', icon: 'maskSubject', ai: true },
+  { type: 'sky', icon: 'maskSky', ai: true },
+  { type: 'background', icon: 'maskBackground', ai: true },
+  { type: 'person', icon: 'maskPeople', ai: true },
+  { type: 'object', icon: 'maskObject', ai: true },
+  { type: 'brush', icon: 'maskBrush' },
+  { type: 'linear', icon: 'maskLinear' },
+  { type: 'radial', icon: 'maskRadial' },
+  { type: 'luminance', icon: 'maskLuminance' },
+  { type: 'color', icon: 'maskColor' },
 ];
 
 export function useBrush(): SharedValue<BrushSettings> {
@@ -53,7 +53,7 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
             {busy === m.id ? (
               <ActivityIndicator size="small" color={colors.accent} />
             ) : (
-              <Ionicons name={KINDS.find((k) => k.type === m.type)?.icon ?? 'layers'} size={20} color={m.visible ? colors.text : colors.textFaint} />
+              <Icon name={KINDS.find((k) => k.type === m.type)?.icon ?? 'layers'} size={20} color={m.visible ? colors.text : colors.textFaint} />
             )}
             <Text style={styles.maskName} numberOfLines={1}>
               {m.name}
@@ -67,7 +67,7 @@ export function MasksPanel({ recipe, brush }: { recipe: Recipe; brush: SharedVal
           <View style={styles.grid}>
             {kinds.map((k) => (
               <Pressable key={k.type} style={styles.kind} onPress={() => addMask(k.type, t(`masks.${k.type}`))}>
-                <Ionicons name={k.icon} size={24} color={k.ai ? colors.accent : colors.text} />
+                <Icon name={k.icon} size={24} color={k.ai ? colors.accent : colors.text} weight="light" />
                 <Text style={styles.kindText} numberOfLines={2}>
                   {t(`masks.${k.type}`)}
                 </Text>
@@ -116,11 +116,11 @@ function MaskEditor(p: {
   return (
     <>
       <View style={styles.actions}>
-        <IconButton icon={m.visible ? 'eye-outline' : 'eye-off-outline'} onPress={() => p.onUpdate((x) => ({ ...x, visible: !x.visible }))} />
-        <IconButton icon="swap-horizontal" active={m.invert} onPress={() => p.onUpdate((x) => ({ ...x, invert: !x.invert }))} label={t('masks.invert')} />
-        <IconButton icon="color-filter-outline" active={p.overlay} onPress={() => p.onOverlay(!p.overlay)} label={t('masks.showOverlay')} />
+        <IconButton icon={m.visible ? 'eye' : 'eyeOff'} onPress={() => p.onUpdate((x) => ({ ...x, visible: !x.visible }))} />
+        <IconButton icon="invert" active={m.invert} onPress={() => p.onUpdate((x) => ({ ...x, invert: !x.invert }))} label={t('masks.invert')} />
+        <IconButton icon="overlay" active={p.overlay} onPress={() => p.onOverlay(!p.overlay)} label={t('masks.showOverlay')} />
         <View style={{ flex: 1 }} />
-        <IconButton icon="trash-outline" color={colors.danger} onPress={p.onRemove} label={t('common.delete')} />
+        <IconButton icon="trash" color={colors.danger} onPress={p.onRemove} label={t('common.delete')} />
       </View>
       {p.status && <Text style={styles.empty}>{p.status}</Text>}
       {m.type === 'brush' && <BrushControls brush={p.brush} />}
@@ -141,7 +141,7 @@ function MaskEditor(p: {
           {p.brushing && <BrushControls brush={p.brush} refine />}
           {m.strokes.length > 0 && (
             <ChipRow>
-              <Chip icon="refresh" label={t('masks.clearRefine')} onPress={() => p.onUpdate((x) => ({ ...x, strokes: [] }))} />
+              <Chip icon="reset" label={t('masks.clearRefine')} onPress={() => p.onUpdate((x) => ({ ...x, strokes: [] }))} />
             </ChipRow>
           )}
         </>
@@ -225,9 +225,9 @@ function BrushControls({ brush, refine }: { brush: SharedValue<BrushSettings>; r
   return (
     <>
       <ChipRow>
-        <Chip icon={refine ? 'add-circle-outline' : 'brush'} label={t(refine ? 'masks.paintAdd' : 'masks.brush')} active={!b.erase} onPress={() => set({ erase: false })} />
+        <Chip icon={refine ? 'addCircle' : 'maskBrush'} label={t(refine ? 'masks.paintAdd' : 'masks.brush')} active={!b.erase} onPress={() => set({ erase: false })} />
         <Chip
-          icon="remove-circle-outline"
+          icon={refine ? 'removeCircle' : 'erase'}
           label={t(refine ? 'masks.paintSubtract' : 'masks.erase')}
           active={b.erase}
           onPress={() => set({ erase: true })}
@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    borderRadius: radius.md,
+    borderRadius: radius.tile,
     backgroundColor: colors.surface2,
     maxWidth: 170,
   },

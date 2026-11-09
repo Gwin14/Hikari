@@ -2,13 +2,13 @@ import * as Haptics from 'expo-haptics';
 import { memo, useCallback, useEffect } from 'react';
 import { StyleSheet, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedProps, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedProps, useAnimatedStyle, useSharedValue, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { getIn, setIn, type KeyPath } from '@/core/recipe/path';
 import type { Recipe } from '@/core/recipe/schema';
 import { getBool } from '@/state/prefs';
-import { colors, font, space } from './theme';
+import { radius, space, tabular, type, useStyles, useTheme, type Palette } from './theme';
 
 const AnimatedInput = Animated.createAnimatedComponent(TextInput);
 
@@ -32,7 +32,7 @@ export interface SliderProps {
 }
 
 const TRACK_H = 3;
-const KNOB = 18;
+const KNOB = 22;
 
 function fmt(v: number, decimals: number, unit: string) {
   'worklet';
@@ -47,6 +47,12 @@ function fmt(v: number, decimals: number, unit: string) {
  */
 export const Slider = memo(function Slider(p: SliderProps) {
   const { min, max, neutral = 0, step = 0, decimals = 0, unit = '' } = p;
+  const c = useTheme();
+  const styles = useStyles(makeStyles);
+  const accent = c.accentInk;
+  const dim = c.textDim;
+  // the knob stays white in both themes (a physical control), lifted by its shadow
+  const knobIdle = '#FFFFFF';
   const width = useSharedValue(1);
   const value = useSharedValue(p.value);
   /** Unrounded value while dragging (keeps sub-step precision). */
@@ -114,8 +120,8 @@ export const Slider = memo(function Slider(p: SliderProps) {
     });
 
   const knob = useAnimatedStyle(() => ({
-    transform: [{ translateX: ((value.value - min) / (max - min)) * width.value }],
-    backgroundColor: active.value ? colors.accent : colors.text,
+    transform: [{ translateX: ((value.value - min) / (max - min)) * width.value }, { scale: withTiming(active.value ? 1.15 : 1, { duration: 120 }) }],
+    backgroundColor: knobIdle,
   }));
   const fill = useAnimatedStyle(() => {
     const pos = ((value.value - min) / (max - min)) * width.value;
@@ -123,7 +129,10 @@ export const Slider = memo(function Slider(p: SliderProps) {
     return { left: Math.min(pos, zero) + KNOB / 2, width: Math.abs(pos - zero) };
   });
   const textProps = useAnimatedProps(() => ({ text: fmt(value.value, decimals, unit) }) as never);
-  const labelStyle = useAnimatedStyle(() => ({ color: active.value ? colors.accent : colors.textDim }));
+  const labelStyle = useAnimatedStyle(() => ({ color: active.value ? accent : dim }));
+  const valueStyle = useAnimatedStyle(() => ({ color: active.value || value.value !== neutral ? accent : dim }));
+  // bipolar sliders get a tick at the neutral point
+  const centre = neutral > min && neutral < max ? (neutral - min) / (max - min) : null;
 
   return (
     <GestureDetector gesture={Gesture.Simultaneous(pan, tap)}>
@@ -135,7 +144,7 @@ export const Slider = memo(function Slider(p: SliderProps) {
           <AnimatedInput
             editable={false}
             pointerEvents="none"
-            style={styles.value}
+            style={[styles.value, valueStyle]}
             defaultValue={fmt(p.value, decimals, unit)}
             animatedProps={textProps}
           />
@@ -144,6 +153,11 @@ export const Slider = memo(function Slider(p: SliderProps) {
           <View style={[styles.track, p.gradient && { backgroundColor: 'transparent' }]}>
             {p.gradient && <GradientTrack colors={p.gradient} />}
           </View>
+          {centre !== null && !p.gradient && (
+            <View style={styles.tickTrack} pointerEvents="none">
+              <View style={[styles.tick, { left: `${centre * 100}%` }]} />
+            </View>
+          )}
           {!p.gradient && <Animated.View style={[styles.fill, fill]} />}
           <Animated.View style={[styles.knob, knob]} />
         </View>
@@ -181,31 +195,30 @@ export function RecipeSlider(
   return <Slider {...rest} value={value} onLive={onLive} onCommit={(v) => onCommit(path, v)} />;
 }
 
-const styles = StyleSheet.create({
-  root: { paddingVertical: space.sm, paddingHorizontal: space.lg },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  label: { fontSize: font.sm, fontWeight: '500', flex: 1 },
-  value: { color: colors.text, fontSize: font.sm, fontVariant: ['tabular-nums'], minWidth: 48, textAlign: 'right', padding: 0 },
-  trackWrap: { height: KNOB, justifyContent: 'center' },
-  track: {
-    position: 'absolute',
-    left: KNOB / 2,
-    right: KNOB / 2,
-    height: TRACK_H,
-    borderRadius: 2,
-    backgroundColor: colors.surface3,
-  },
-  fill: { position: 'absolute', height: TRACK_H, backgroundColor: colors.accent, borderRadius: 2 },
-  knob: {
-    position: 'absolute',
-    left: 0,
-    width: KNOB,
-    height: KNOB,
-    borderRadius: KNOB / 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-  },
-});
-
+const makeStyles = (c: Palette) =>
+  StyleSheet.create({
+    root: { paddingVertical: space.sm, paddingHorizontal: space.lg },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: space.xs },
+    label: { ...type.subhead, fontWeight: '500', flex: 1 },
+    value: { ...type.subhead, fontWeight: '600', ...tabular, minWidth: 56, textAlign: 'right', padding: 0 },
+    trackWrap: { height: KNOB + 6, justifyContent: 'center' },
+    track: {
+      position: 'absolute',
+      left: KNOB / 2,
+      right: KNOB / 2,
+      height: TRACK_H,
+      borderRadius: radius.pill,
+      backgroundColor: c.surface3,
+    },
+    tickTrack: { position: 'absolute', left: KNOB / 2, right: KNOB / 2, height: 10 },
+    tick: { position: 'absolute', top: 0, width: 2, height: 10, marginLeft: -1, borderRadius: 1, backgroundColor: c.textFaint },
+    fill: { position: 'absolute', height: TRACK_H, backgroundColor: c.accent, borderRadius: radius.pill },
+    knob: {
+      position: 'absolute',
+      left: 0,
+      width: KNOB,
+      height: KNOB,
+      borderRadius: KNOB / 2,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.35)',
+    },
+  });

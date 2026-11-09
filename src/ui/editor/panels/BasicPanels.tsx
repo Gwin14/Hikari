@@ -252,7 +252,7 @@ export function LutPanel({ recipe }: { recipe: Recipe }) {
       {recipe.lut.id && <Sliders recipe={recipe} specs={[unipolar(t('adj.intensity'), ['lut', 'intensity'], { neutral: 100 })]} />}
       {canShare && recipe.lut.id && !recipe.lut.id.startsWith('komorebi-') && (
         <ChipRow>
-          <Chip icon="camera-outline" label={t('komorebi.send')} onPress={sendToKomorebi} />
+          <Chip icon="camera" label={t('komorebi.send')} onPress={sendToKomorebi} />
         </ChipRow>
       )}
     </>

@@ -127,8 +127,8 @@ export function PresetsPanel({ recipe }: { recipe: Recipe }) {
     <>
       <ChipRow>
         <Chip icon="add" label={t('presets.create')} onPress={() => setSaving(true)} />
-        <Chip icon="download-outline" label={t('presets.import')} onPress={importPreset} />
-        <Chip icon="share-outline" label={t('presets.exportCurrent')} onPress={exportCurrent} />
+        <Chip icon="download" label={t('presets.import')} onPress={importPreset} />
+        <Chip icon="share" label={t('presets.exportCurrent')} onPress={exportCurrent} />
       </ChipRow>
       {selected && (
         <Slider
@@ -234,7 +234,7 @@ const styles = StyleSheet.create({
   preset: {
     width: 92,
     height: 56,
-    borderRadius: radius.md,
+    borderRadius: radius.tile,
     backgroundColor: colors.surface2,
     padding: space.sm,
     justifyContent: 'flex-end',
@@ -243,9 +243,9 @@ const styles = StyleSheet.create({
   presetText: { color: colors.text, fontSize: font.xs, fontWeight: '600' },
   sections: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: space.xl },
-  dialog: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: space.lg, gap: space.md },
+  dialog: { backgroundColor: colors.surface, borderRadius: radius.card, padding: space.lg, gap: space.md },
   title: { color: colors.text, fontSize: font.lg, fontWeight: '700' },
-  input: { backgroundColor: colors.surface2, color: colors.text, borderRadius: radius.md, padding: space.md, fontSize: font.md },
+  input: { backgroundColor: colors.surface2, color: colors.text, borderRadius: radius.tile, padding: space.md, fontSize: font.md },
   caption: { color: colors.textDim, fontSize: font.sm },
   buttons: { flexDirection: 'row', gap: space.md, marginTop: space.sm },
 });

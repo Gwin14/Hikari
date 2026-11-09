@@ -8,7 +8,7 @@ import { KOMOREBI_SCHEME, registerHandoff } from '@/core/companion/komorebi';
 import { libraryAssetId, libraryItem } from '@/core/sources/library';
 import { useLibrary } from '@/state/library';
 import { Button, EmptyState } from '@/ui/kit';
-import { colors, common } from '@/ui/theme';
+import { useTheme } from '@/ui/theme';
 
 type Params = {
   asset?: string;
@@ -57,19 +57,21 @@ export default function EditLinkScreen() {
   }, [granted, params.asset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const leave = () => router.replace('/');
+  const c = useTheme();
+  const screen = { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg } as const;
 
   if (!params.asset || missing) {
     return (
-      <View style={[common.screen, common.center]}>
-        <EmptyState icon="image-outline" title={t('link.missingTitle')} body={t('link.missingBody')} action={<Button primary label={t('link.openLibrary')} onPress={leave} />} />
+      <View style={screen}>
+        <EmptyState icon="photo" title={t('link.missingTitle')} body={t('link.missingBody')} action={<Button primary label={t('link.openLibrary')} onPress={leave} />} />
       </View>
     );
   }
   if (permission && !granted) {
     return (
-      <View style={[common.screen, common.center]}>
+      <View style={screen}>
         <EmptyState
-          icon="images-outline"
+          icon="photos"
           title={t('library.permissionTitle')}
           body={t('library.permissionBody')}
           action={<Button primary label={t('library.permissionButton')} onPress={requestPermission} />}
@@ -78,8 +80,8 @@ export default function EditLinkScreen() {
     );
   }
   return (
-    <View style={[common.screen, common.center]}>
-      <ActivityIndicator color={colors.accent} />
+    <View style={screen}>
+      <ActivityIndicator color={c.textDim} />
     </View>
   );
 }

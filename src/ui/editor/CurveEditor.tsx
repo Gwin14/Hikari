@@ -9,7 +9,7 @@ import { buildSpline } from '@/core/color/curve';
 import type { CurvePoint, Curves, Recipe } from '@/core/recipe/schema';
 import { previewCurve, useEditor } from '@/state/editor';
 import { Segmented } from '../kit';
-import { colors, font, space } from '../theme';
+import { colors, font, radius, space } from '../theme';
 
 type Channel = keyof Curves;
 const CH_COLOR: Record<Channel, string> = { rgb: '#FFFFFF', r: '#FF5A5F', g: '#4CD07D', b: '#4D9BFF' };
@@ -180,6 +180,6 @@ export function CurveEditor({ recipe }: { recipe: Recipe }) {
 }
 
 const styles = StyleSheet.create({
-  box: { alignItems: 'center', marginTop: space.md, backgroundColor: colors.surface, borderRadius: 8, overflow: 'hidden' },
+  box: { alignItems: 'center', marginTop: space.md, backgroundColor: colors.canvas, borderRadius: radius.tile, borderCurve: 'continuous', overflow: 'hidden' },
   hint: { color: colors.textFaint, fontSize: font.xs, textAlign: 'center', marginTop: space.sm },
 });

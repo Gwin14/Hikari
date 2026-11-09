@@ -63,7 +63,7 @@ O projeto Jest `gpu` (`src/__tests__/pipeline.gpu.test.ts`) renderiza os shaders
 ## Arquitetura
 
 ```
-src/app/                 rotas (expo-router): (tabs)/index · folders · settings, folder/[id], editor/[key], export, batch
+src/app/                 rotas (expo-router): abas nativas (tabs)/(library) · (folders) [+ folder/[id]] · (settings), cada uma com sua pilha; acima delas editor/[key], export, batch, albums
 src/core/recipe/         receita não destrutiva (schema, defaults, migração, ops, presets)
 src/core/pipeline/       SkSL (develop → local × N → finish), uniforms, geometria, render, máscaras
 src/core/sources/        PhotoItem unificado: fototeca, pastas, pareamento RAW+JPEG
@@ -72,7 +72,7 @@ src/core/auto/           histograma, auto-tom, auto-WB, máscara de céu
 src/core/xmp/            sidecars XMP (hikari + crs)
 src/core/db/             catálogo SQLite (receitas, classificações, instantâneos, predefinições, pastas, LUTs)
 src/state/               zustand (editor, biblioteca) + MMKV (preferências)
-src/ui/                  design system, grade, editor (canvas, recorte, alças, curvas, roda de cor, painéis)
+src/ui/                  design system (theme: tokens claro/escuro, Icon: SF Symbols/Material Symbols, kit), grade, editor (canvas, recorte, alças, curvas, roda de cor, painéis)
 modules/hikari-native/   Swift (CIRAWFilter, ImageIO, Vision, PhotoKit, bookmarks) + Kotlin/C++ (LibRaw, ML Kit, HeifWriter, TIFF)
 ```
 

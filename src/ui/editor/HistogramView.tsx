@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { Histogram } from '@/core/auto/analysis';
 import { useEditor } from '@/state/editor';
-import { colors } from '../theme';
+import { colors, radius } from '../theme';
 
 const W = 132;
 const H = 56;
@@ -45,7 +45,7 @@ export function HistogramView({ histogram }: { histogram: Histogram | null }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { width: W, height: H, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 6, overflow: 'hidden' },
+  wrap: { width: W, height: H, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: radius.badge, borderCurve: 'continuous', overflow: 'hidden' },
   clip: { position: 'absolute', top: 2, width: 8, height: 8, borderRadius: 2 },
   on: { borderWidth: 1, borderColor: colors.text },
 });
