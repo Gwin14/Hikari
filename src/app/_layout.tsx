@@ -1,6 +1,6 @@
 import '@/i18n';
 
-import { Stack } from 'expo-router';
+import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider, Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useEffect } from 'react';
@@ -22,27 +22,30 @@ function RootStack() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: c.bg }}>
       <StatusBar style={c.scheme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
-        <Stack.Screen name="(tabs)" />
-        {/* Full-attention workspace above the tabs: always dark, no edge swipe (the canvas pans). */}
-        <Stack.Screen
-          name="editor/[key]"
-          options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: colors.canvas } }}
-        />
-        <Stack.Screen name="export" options={{ presentation: 'modal', ...modalHeader(c) }} />
-        <Stack.Screen name="batch" options={{ presentation: 'modal', ...modalHeader(c) }} />
-        <Stack.Screen
-          name="albums"
-          options={{
-            presentation: 'formSheet',
-            sheetAllowedDetents: [0.6, 1],
-            sheetGrabberVisible: true,
-            sheetCornerRadius: radius.sheet,
-            contentStyle: { backgroundColor: c.bg },
-          }}
-        />
-        <Stack.Screen name="edit" options={{ animation: 'fade' }} />
-      </Stack>
+      {/* Native headers take their interface style from this theme, which also sets the Liquid Glass of bar items and menus. */}
+      <NavigationThemeProvider value={c.scheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
+          <Stack.Screen name="(tabs)" />
+          {/* Full-attention workspace above the tabs: always dark, no edge swipe (the canvas pans). */}
+          <Stack.Screen
+            name="editor/[key]"
+            options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: colors.canvas } }}
+          />
+          <Stack.Screen name="export" options={{ presentation: 'modal', ...modalHeader(c) }} />
+          <Stack.Screen name="batch" options={{ presentation: 'modal', ...modalHeader(c) }} />
+          <Stack.Screen
+            name="albums"
+            options={{
+              presentation: 'formSheet',
+              sheetAllowedDetents: [0.6, 1],
+              sheetGrabberVisible: true,
+              sheetCornerRadius: radius.sheet,
+              contentStyle: { backgroundColor: c.bg },
+            }}
+          />
+          <Stack.Screen name="edit" options={{ animation: 'fade' }} />
+        </Stack>
+      </NavigationThemeProvider>
     </GestureHandlerRootView>
   );
 }
