@@ -43,6 +43,8 @@ Docs: https://docs.expo.dev/eas/index.md
 ## Hikari specifics
 
 - Native code lives in the local Expo module `modules/hikari-native` (Swift + Kotlin + C++/LibRaw), imported as `hikari-native`. It is optional at runtime (`isNativeAvailable`) so JS keeps working without a dev build.
-- Image math lives in SkSL strings in `src/core/pipeline/shaders.ts`. After editing them run `node scripts/check-shaders.mjs` and `npm test` (the `gpu` Jest project renders the shaders with CanvasKit).
+- The develop pipeline exists three times until the Skia path is removed: SkSL in `src/core/pipeline/shaders.ts`, Metal in `modules/hikari-native/ios/render/Shaders.swift` and GLSL in `modules/hikari-native/android/.../render/GlShaders.kt`. Change all of them together; the uniform layouts live in `src/core/pipeline/nativeFrame.ts`. After editing run `node scripts/check-shaders.mjs` and `npm test` (the `gpu` Jest project renders all of them and compares).
+- Images are native GPU textures behind the `SkImage`-shaped wrapper in `src/core/pipeline/nativeImage.ts`; branch on `hasNativeRenderer` only inside `src/core/pipeline`, `export` and `retouch`.
+- CPU image math (mask refinement, content-aware fill, histogram, sky mask, auto adjust) lives in C++ in `modules/hikari-native/ios/compute`, reached through `src/core/compute/ops.ts`. The C++ is shared with Android through `android/src/main/cpp/hikari_jni.cpp`. The TypeScript versions in `src/core` remain the fallback where the native module is absent: change both together; `src/__tests__/computeParity.test.ts` compares them.
 - Functions called from the UI thread (`uniforms.ts`, `geometry.ts`, `render.ts` draw path, `recipe/path.ts`, `ui/editor/viewMath.ts`) must stay `'worklet'`.
 - Write shared values with `.set()` (React Compiler lint).

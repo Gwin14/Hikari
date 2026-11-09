@@ -1,4 +1,6 @@
-import { requireOptionalNativeModule } from 'expo';
+import { requireNativeView, requireOptionalNativeModule } from 'expo';
+import type { ComponentType } from 'react';
+import type { ViewProps } from 'react-native';
 
 export type PixelFormat = 'rgba8' | 'rgba16f' | 'rgba16';
 
@@ -108,12 +110,125 @@ export interface FolderGrant {
   name: string;
 }
 
+export interface RefineMaskOptions {
+  radius: number;
+  eps: number;
+  lo: number;
+  hi: number;
+}
+
+export interface RemoveSpotOptions {
+  grow: number;
+  feather: number;
+  searchMaxDim: number;
+  seed: number;
+}
+
+export interface RemoveSpotResult {
+  /** Float32 bytes, 3 per pixel. */
+  pixels: Uint8Array;
+  /** Float32 bytes, 1 per pixel. */
+  alpha: Uint8Array;
+}
+
+export interface NativeHistogram {
+  /** 1024 values: 256 bins each of r, g, b, luma. */
+  bins: number[];
+  total: number;
+  clipLow: number;
+  clipHigh: number;
+}
+
+export interface AutoAdjustResult {
+  light: { exposure: number; contrast: number; highlights: number; shadows: number; whites: number; blacks: number };
+  temperature: number;
+  tint: number;
+}
+
+/** A GPU image owned by the native renderer. */
+export interface RenderImageObject {
+  readonly id: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fullWidth: number;
+  readonly fullHeight: number;
+  readonly isRaw: boolean;
+  readonly isFloat: boolean;
+  readRgba8(x: number, y: number, width: number, height: number): Uint8Array;
+  /** The whole image's RGBA16 bytes. */
+  readRgba16(): Uint8Array;
+  /** RGBA, 32-bit floats. */
+  readFloats(x: number, y: number, width: number, height: number): Uint8Array;
+  encode(format: 'jpeg' | 'png', quality: number): Uint8Array;
+  encodeToFile(options: EncodeOptions): Promise<{ path: string; size: number }>;
+}
+
+export interface RenderInputsRecord {
+  source: number;
+  cleaned: number;
+  blurN: number;
+  blurS: number;
+  blurM: number;
+  blurL: number;
+  curve: number | null;
+  lut: number | null;
+  masks: number[];
+}
+
+export interface StrokeRecord {
+  points: number[];
+  size: number;
+  hardness: number;
+  flow: number;
+  erase: boolean;
+}
+
+export interface WatermarkRecord {
+  text: string;
+  position: string;
+  opacity: number;
+  size: number;
+}
+
+export interface EditorSurfaceObject {
+  setFrame(frame: number[]): void;
+  setInputs(inputs: RenderInputsRecord | null): void;
+  setCurve(curve: RenderImageObject): void;
+}
+
 interface HikariNativeSpec {
+  RenderImage: unknown;
+  isRendererSupported?(): boolean;
+  EditorSurface: new () => EditorSurfaceObject;
+  makeRenderImage(pixels: Uint8Array, width: number, height: number, format: 'rgba8' | 'rgba16f'): RenderImageObject;
+  loadRenderImage(uri: string, options: DecodeOptions): Promise<RenderImageObject>;
+  loadEncodedRenderImage(uri: string): Promise<RenderImageObject>;
+  blurRenderImage(image: RenderImageObject, sigma: number, width: number, height: number): RenderImageObject;
+  compositeRenderImage(source: RenderImageObject, patches: { image: number; x: number; y: number }[]): RenderImageObject;
+  renderOffscreen(inputs: RenderInputsRecord, frame: number[], width: number, height: number, bits: 8 | 16, watermark: WatermarkRecord | null): RenderImageObject;
+  rasterizeStrokes(strokes: StrokeRecord[], width: number, height: number, base: RenderImageObject | null): RenderImageObject;
+  rasterizeArea(strokes: StrokeRecord[], frameW: number, frameH: number, region: number[], objects: RenderImageObject | null): Uint8Array;
   decodeImage(uri: string, options: DecodeOptions): Promise<DecodeResult>;
   readMetadata(uri: string): Promise<PhotoMetadata>;
   encodeImage(pixels: Uint8Array, width: number, height: number, options: EncodeOptions): Promise<{ path: string; size: number }>;
   segment(uri: string, kind: SegmentKind, maxDim: number, preferRaw: boolean): Promise<MaskResult | null>;
   segmentInstances(uri: string, maxDim: number, preferRaw: boolean): Promise<InstancesResult | null>;
+  refineMask(guide: Uint8Array, mask: Uint8Array, width: number, height: number, options: RefineMaskOptions): Promise<Uint8Array>;
+  objectMask(guide: Uint8Array, coverage: Uint8Array, selected: Uint8Array | null, width: number, height: number): Promise<Uint8Array>;
+  selectInstances(
+    labels: Uint8Array,
+    labelStride: number,
+    count: number,
+    coverage: Uint8Array,
+    coverageStride: number,
+    n: number,
+    minCover: number,
+    minShare: number,
+  ): Promise<{ mask: Uint8Array; picked: number }>;
+  removeSpot(pixels: Uint8Array, area: Uint8Array, alpha: Uint8Array, width: number, height: number, options: RemoveSpotOptions): Promise<RemoveSpotResult>;
+  computeHistogram(pixels: Uint8Array, step: number): Promise<NativeHistogram>;
+  skyMask(pixels: Uint8Array, width: number, height: number): Promise<Uint8Array>;
+  autoAdjust(pixels: Uint8Array): Promise<AutoAdjustResult>;
   assetResources(assetId: string): Promise<AssetResources | null>;
   exportAssetResource(assetId: string, kind: 'raw' | 'photo'): Promise<string>;
   saveEditToLibrary(assetId: string, renderedPath: string, adjustmentJson: string, formatVersion: string): Promise<boolean>;
@@ -130,6 +245,14 @@ const Native = requireOptionalNativeModule<HikariNativeSpec>('HikariNative');
 /** Native features exist only in a development build (not Expo Go / web). */
 export const isNativeAvailable = Native != null;
 
+/** The CPU image math has a native build on this platform. */
+export const hasNativeCompute = typeof Native?.refineMask === 'function';
+
+/** The GPU pipeline runs natively; otherwise (old Android GPUs, Expo Go, web) through Skia. */
+export const hasNativeRenderer = typeof Native?.RenderImage === 'function' && Native.isRendererSupported?.() !== false;
+
+export const EditorRenderView: ComponentType<ViewProps> | null = hasNativeRenderer ? requireNativeView<ViewProps>('HikariNative') : null;
+
 function native(): HikariNativeSpec {
   if (!Native) throw new Error('HikariNative is unavailable. Build the app with `npx expo run:ios|android`.');
   return Native;
@@ -143,6 +266,40 @@ export const segment = (uri: string, kind: SegmentKind, maxDim: number, preferRa
   native().segment(uri, kind, maxDim, preferRaw);
 export const segmentInstances = (uri: string, maxDim: number, preferRaw: boolean) =>
   native().segmentInstances(uri, maxDim, preferRaw);
+export const refineMask = (guide: Uint8Array, mask: Uint8Array, width: number, height: number, options: RefineMaskOptions) =>
+  native().refineMask(guide, mask, width, height, options);
+export const objectMask = (guide: Uint8Array, coverage: Uint8Array, selected: Uint8Array | null, width: number, height: number) =>
+  native().objectMask(guide, coverage, selected, width, height);
+export const selectInstances = (
+  labels: Uint8Array,
+  labelStride: number,
+  count: number,
+  coverage: Uint8Array,
+  coverageStride: number,
+  n: number,
+  minCover: number,
+  minShare: number,
+) => native().selectInstances(labels, labelStride, count, coverage, coverageStride, n, minCover, minShare);
+export const removeSpot = (pixels: Uint8Array, area: Uint8Array, alpha: Uint8Array, width: number, height: number, options: RemoveSpotOptions) =>
+  native().removeSpot(pixels, area, alpha, width, height, options);
+export const computeHistogram = (pixels: Uint8Array, step: number) => native().computeHistogram(pixels, step);
+export const skyMask = (pixels: Uint8Array, width: number, height: number) => native().skyMask(pixels, width, height);
+export const autoAdjust = (pixels: Uint8Array) => native().autoAdjust(pixels);
+export const createEditorSurface = (): EditorSurfaceObject => new (native().EditorSurface)();
+export const makeRenderImage = (pixels: Uint8Array, width: number, height: number, format: 'rgba8' | 'rgba16f') =>
+  native().makeRenderImage(pixels, width, height, format);
+export const loadRenderImage = (uri: string, options: DecodeOptions) => native().loadRenderImage(uri, options);
+export const loadEncodedRenderImage = (uri: string) => native().loadEncodedRenderImage(uri);
+export const blurRenderImage = (image: RenderImageObject, sigma: number, width: number, height: number) =>
+  native().blurRenderImage(image, sigma, width, height);
+export const compositeRenderImage = (source: RenderImageObject, patches: { image: number; x: number; y: number }[]) =>
+  native().compositeRenderImage(source, patches);
+export const renderOffscreen = (inputs: RenderInputsRecord, frame: number[], width: number, height: number, bits: 8 | 16, watermark: WatermarkRecord | null) =>
+  native().renderOffscreen(inputs, frame, width, height, bits, watermark);
+export const rasterizeStrokes = (strokes: StrokeRecord[], width: number, height: number, base: RenderImageObject | null) =>
+  native().rasterizeStrokes(strokes, width, height, base);
+export const rasterizeArea = (strokes: StrokeRecord[], frameW: number, frameH: number, region: number[], objects: RenderImageObject | null) =>
+  native().rasterizeArea(strokes, frameW, frameH, region, objects);
 export const assetResources = (assetId: string) => (Native ? Native.assetResources(assetId) : Promise.resolve(null));
 export const exportAssetResource = (assetId: string, kind: 'raw' | 'photo') => native().exportAssetResource(assetId, kind);
 export const saveEditToLibrary = (assetId: string, renderedPath: string, json: string, version: string) =>

@@ -32,6 +32,9 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBRAW_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(${libraw_cmake_SOURCE_DIR} ${CMAKE_BINARY_DIR}/libraw)
 
-add_library(hikari_raw SHARED hikari_raw.cpp)
-target_include_directories(hikari_raw PRIVATE ${libraw_SOURCE_DIR})
+# The image math is shared with iOS.
+set(HIKARI_COMPUTE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../ios/compute)
+
+add_library(hikari_raw SHARED hikari_raw.cpp hikari_jni.cpp ${HIKARI_COMPUTE_DIR}/hikari_compute.cpp)
+target_include_directories(hikari_raw PRIVATE ${libraw_SOURCE_DIR} ${HIKARI_COMPUTE_DIR})
 target_link_libraries(hikari_raw raw_r log)

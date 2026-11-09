@@ -9,6 +9,7 @@
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0B0B0C",
     "ios": {
+      "icon": "./assets/AppIcon.icon",
       "supportsTablet": true,
       "bundleIdentifier": "app.hikari.editor.fabiosantos",
       "infoPlist": {

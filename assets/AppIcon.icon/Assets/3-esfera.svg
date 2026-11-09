@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+<linearGradient id="base" x1="0.1" y1="0.15" x2="0.9" y2="0.85"><stop offset="0" stop-color="#e9d8ff"/><stop offset="0.35" stop-color="#ffd84a"/><stop offset="0.7" stop-color="#ff8a2a"/><stop offset="1" stop-color="#f0507a"/></linearGradient>
+<radialGradient id="azul" cx="18%" cy="82%" r="70%"><stop offset="0" stop-color="#4f6bff"/><stop offset="0.55" stop-color="#7a5cff" stop-opacity="0.85"/><stop offset="1" stop-color="#9a5cf0" stop-opacity="0"/></radialGradient>
+<radialGradient id="rosa" cx="62%" cy="96%" r="45%"><stop offset="0" stop-color="#e45cf5"/><stop offset="1" stop-color="#e45cf5" stop-opacity="0"/></radialGradient>
+<radialGradient id="luz" cx="25%" cy="22%" r="45%"><stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+<clipPath id="c"><circle cx="512" cy="530" r="310"/></clipPath></defs>
+<g clip-path="url(#c)"><rect x="200" y="220" width="624" height="624" fill="url(#base)"/><rect x="200" y="220" width="624" height="624" fill="url(#azul)"/><rect x="200" y="220" width="624" height="624" fill="url(#rosa)"/><rect x="200" y="220" width="624" height="624" fill="url(#luz)"/></g></svg>

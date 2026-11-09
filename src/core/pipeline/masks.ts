@@ -14,14 +14,22 @@ import {
   type SkSurface,
 } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
-import { isNativeAvailable, segment, segmentInstances, type SegmentKind } from 'hikari-native';
+import {
+  hasNativeRenderer,
+  isNativeAvailable,
+  loadEncodedRenderImage,
+  rasterizeStrokes,
+  segment,
+  segmentInstances,
+  type SegmentKind,
+} from 'hikari-native';
 
-import { grayToRgba, skyMask } from '../auto/analysis';
-import { runCompute } from '../compute/worker';
+import { grayToRgba } from '../auto/analysis';
+import { computeObjectMask, computeRefinedMask, computeSelectInstances, computeSkyMask } from '../compute/ops';
 import { decodeTarget } from '../image/load';
 import type { BrushStroke, Mask, SourceRef } from '../recipe/schema';
-import { objectMask, refineMask, selectInstances } from './refine';
-import { makeRgbaImage, resizeImage } from './render';
+import { nativeOf, toImage } from './nativeImage';
+import { blurImage, makeRgbaImage, resizeImage } from './render';
 
 /** Long edge of brush and AI mask textures. */
 const MASK_LONG_EDGE = 2048;
@@ -47,6 +55,7 @@ export function snapshot(surface: SkSurface): SkImage {
 /** Linear-filtered resize to an exact size (masks are upscaled, so nearest would step). */
 export function scaleImage(img: SkImage, w: number, h: number): SkImage {
   if (img.width() === w && img.height() === h) return img;
+  if (hasNativeRenderer) return blurImage(img, 0, w, h);
   const surface = makeSurface(w, h);
   surface
     .getCanvas()
@@ -109,6 +118,7 @@ const maskSize = (aspect: number): [number, number] =>
  */
 export function renderBrushMask(strokes: BrushStroke[], aspect: number, base?: SkImage | null): SkImage | null {
   const [w, h] = base ? [base.width(), base.height()] : maskSize(aspect);
+  if (hasNativeRenderer) return toImage(rasterizeStrokes(strokes, w, h, base ? nativeOf(base) : null));
   const surface = Skia.Surface.MakeOffscreen(w, h) ?? Skia.Surface.Make(w, h);
   if (!surface) return null;
   const canvas = surface.getCanvas();
@@ -119,6 +129,7 @@ export function renderBrushMask(strokes: BrushStroke[], aspect: number, base?: S
 }
 
 function strokeCoverage(strokes: BrushStroke[], w: number, h: number): Uint8Array {
+  if (hasNativeRenderer) return rasterizeStrokes(strokes, w, h, null).readRgba8(0, 0, w, h);
   const surface = makeSurface(w, h);
   const canvas = surface.getCanvas();
   canvas.clear(Skia.Color('black'));
@@ -158,6 +169,7 @@ export function maskBaseKey(photoKey: string, src: SourceRef, m: Mask): string {
 }
 
 async function imageFromFile(uri: string): Promise<SkImage | null> {
+  if (hasNativeRenderer) return toImage(await loadEncodedRenderImage(uri));
   const data = await Skia.Data.fromURI(uri);
   return Skia.Image.MakeImageFromEncoded(data);
 }
@@ -230,7 +242,7 @@ export async function selectObjects(
   const inst = await instanceMap(photoKey, src);
   if (!inst) return null;
   const cov = strokeCoverage(strokes, inst.w, inst.h);
-  const sel = await runCompute(selectInstances, inst.pixels, 4, inst.count, cov, 4, inst.w * inst.h, strict ? 0.25 : 0.08, strict ? 2 : 0.3);
+  const sel = await computeSelectInstances(inst.pixels, 4, inst.count, cov, 4, inst.w * inst.h, strict ? 0.25 : 0.08, strict ? 2 : 0.3);
   return sel.picked ? { mask: sel.mask, w: inst.w, h: inst.h } : null;
 }
 
@@ -272,9 +284,9 @@ export function maskBase(photoKey: string, src: SourceRef, m: Mask, proxy: SkIma
 }
 
 /** Heuristic sky detection (no platform API for it), upscaled for refinement. */
-function skyRaw(proxy: SkImage): SkImage | null {
+async function skyRaw(proxy: SkImage): Promise<SkImage | null> {
   const small = resizeImage(proxy, 768);
-  const m = skyMask(readRgba(small), small.width(), small.height());
+  const m = await computeSkyMask(readRgba(small), small.width(), small.height());
   if (!m.some((v) => v > 128)) return null;
   return makeRgbaImage(grayToRgba(m), small.width(), small.height());
 }
@@ -295,11 +307,11 @@ async function computeBase(key: string, photoKey: string, src: SourceRef, m: Mas
     const adds = m.strokes.filter((s) => !s.erase);
     if (!adds.length) return null;
     const sel = await selectedObjects(photoKey, src, adds, gw, gh);
-    out = await runCompute(objectMask, guide, strokeCoverage(adds, gw, gh), sel ? readRgba(sel) : null, gw, gh);
+    out = await computeObjectMask(guide, strokeCoverage(adds, gw, gh), sel ? readRgba(sel) : null, gw, gh);
   } else {
     let raw: SkImage | null = null;
     if (m.type === 'sky') {
-      raw = skyRaw(proxy);
+      raw = await skyRaw(proxy);
     } else {
       if (!isNativeAvailable) return null;
       const kind: SegmentKind = m.type === 'person' ? 'person' : 'subject';
@@ -316,7 +328,7 @@ async function computeBase(key: string, photoKey: string, src: SourceRef, m: Mas
     }
     if (!raw) return null;
     const sky = m.type === 'sky';
-    out = await runCompute(refineMask, guide, readRgba(scaleImage(raw, gw, gh)), gw, gh, {
+    out = await computeRefinedMask(guide, readRgba(scaleImage(raw, gw, gh)), gw, gh, {
       // hair and fur need a fine window; sky edges (foliage, skylines) a wider one
       radius: Math.max(2, Math.round(long * (sky ? 0.008 : 0.005))),
       eps: sky ? 4e-4 : 1e-4,

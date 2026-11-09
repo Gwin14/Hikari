@@ -8,6 +8,7 @@ import { identityStrip, parseCube, stripToCube } from '@/core/color/cube';
 import { bakeCurveLut } from '@/core/color/curve';
 import { createMask, createRecipe } from '@/core/recipe/defaults';
 import type { Recipe } from '@/core/recipe/schema';
+import { DEVELOP_LAYOUT, FINISH_LAYOUT, LOCAL_LAYOUT, packOffscreenFrame } from '@/core/pipeline/nativeFrame';
 import { DEVELOP_SKSL, FINISH_SKSL, LOCAL_SKSL } from '@/core/pipeline/shaders';
 import { developUniforms, finishUniforms, localUniforms, packUniforms, type UniformLayout } from '@/core/pipeline/uniforms';
 
@@ -294,5 +295,192 @@ describe('light effects (CanvasKit)', () => {
     expect(px(lit, x, 2)[0] - px(plain, x, 2)[0]).toBeGreaterThan(px(lit, x, 2)[2] - px(plain, x, 2)[2]);
     // shadows stay put
     expect(Math.abs(px(lit, 2, 2)[0] - px(plain, 2, 2)[0])).toBeLessThanOrEqual(2);
+  });
+});
+
+const RENDER_CASES: [string, (r: Recipe) => void][] = [
+  ['default', () => {}],
+  ['exposure', (r) => { r.light.exposure = 0.8; }],
+  ['tone', (r) => { r.light.contrast = 45; r.light.highlights = -60; r.light.shadows = 50; r.light.whites = 20; r.light.blacks = -30; }],
+  ['color', (r) => { r.color.temperature = 40; r.color.tint = -25; r.color.vibrance = 35; r.color.saturation = -20; }],
+  ['hsl', (r) => { r.hsl.blue.sat = -70; r.hsl.red.hue = 40; r.hsl.green.lum = 30; }],
+  ['curve', (r) => { r.curves.rgb = [{ x: 0, y: 0.1 }, { x: 0.5, y: 0.7 }, { x: 1, y: 0.95 }]; }],
+  ['grading', (r) => { r.grading.shadows = { ...r.grading.shadows, hue: 210, sat: 60, lum: 10 }; r.grading.highlights = { ...r.grading.highlights, hue: 40, sat: 50, lum: -10 }; }],
+  ['black and white', (r) => { r.effects.bw = true; r.effects.bwMix.red = 40; }],
+  ['vignette', (r) => { r.effects.vignetteAmount = -60; }],
+  ['grain', (r) => { r.effects.grainAmount = 50; r.effects.grainSize = 40; }],
+  ['bloom', (r) => { r.effects = { ...r.effects, bloomAmount: 70, bloomThreshold: 40, halationAmount: 60, halationThreshold: 50 }; }],
+  ['detail', (r) => { r.detail.sharpenAmount = 80; r.detail.clarity = 40; r.detail.texture = 30; r.detail.dehaze = 25; r.detail.noiseLuma = 30; r.detail.noiseColor = 40; }],
+  ['lens', (r) => { r.lens.distortion = 30; r.lens.chromatic = 50; r.lens.vignetteCorrection = 30; }],
+  ['linear mask', (r) => { const m = createMask('linear', 'g'); m.geometry = { ...m.geometry, x1: 0.1, y1: 0.5, x2: 0.6, y2: 0.5 }; m.adjust.exposure = 40; m.adjust.saturation = -40; r.masks = [m]; }],
+  ['radial mask', (r) => { const m = createMask('radial', 'g'); m.adjust.contrast = 50; m.adjust.temperature = 40; r.masks = [m]; }],
+];
+
+/* The Metal port must draw what the SkSL pipeline draws: both are rendered from the same recipe. */
+const { execFileSync, spawnSync } = require('child_process');
+const { mkdtempSync, rmSync, writeFileSync, readFileSync } = require('fs');
+const { tmpdir } = require('os');
+const { join } = require('path');
+declare const __dirname: string;
+declare const process: { platform: string };
+
+const canBuildMetal = process.platform === 'darwin' && spawnSync('swiftc', ['--version']).status === 0;
+
+describe('native frame layouts', () => {
+  const same = (a: UniformLayout, b: UniformLayout) => expect({ floats: a.floats, entries: a.entries }).toEqual({ floats: b.floats, entries: b.entries });
+  it('match the SkSL uniforms', () => {
+    same(DEVELOP_LAYOUT, programs.develop.layout);
+    same(LOCAL_LAYOUT, programs.local.layout);
+    same(FINISH_LAYOUT, programs.finish.layout);
+  });
+});
+
+(canBuildMetal ? describe : describe.skip)('Metal parity with SkSL', () => {
+  let work: string;
+  let harness: string;
+
+  beforeAll(() => {
+    work = mkdtempSync(join(tmpdir(), 'hikari-metal-'));
+    harness = join(work, 'harness');
+    const root = join(__dirname, '..', '..');
+    execFileSync('swiftc', [
+      '-O',
+      join(root, 'modules/hikari-native/ios/render/Shaders.swift'),
+      join(root, 'modules/hikari-native/ios/render/RenderEngine.swift'),
+      join(root, 'scripts/render-parity/main.swift'),
+      '-o',
+      harness,
+    ]);
+  }, 240_000);
+
+  afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+  const bytes = (b: ArrayBufferView) => new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+
+  function metal(r: Recipe, opts: { outMode?: 0 | 1; maskTex?: Uint8Array; sixteen?: boolean } = {}): Uint8Array {
+    const maskSlots: Record<string, number> = {};
+    r.masks.forEach((m) => (maskSlots[m.id] = 0));
+    const frame = new Float32Array(packOffscreenFrame({ frame: { width: W, height: H, isRaw: false }, maskSlots, lutSize: 0 }, r, 1, { outMode: opts.outMode }));
+    writeFileSync(join(work, 'source'), testImage());
+    writeFileSync(join(work, 'curve'), bakeCurveLut(r.curves));
+    writeFileSync(join(work, 'mask'), opts.maskTex ?? new Uint8Array(0));
+    writeFileSync(join(work, 'frame'), bytes(frame));
+    execFileSync(harness, [work, String(W), String(H), opts.sixteen ? '16' : '8']);
+    return new Uint8Array(readFileSync(join(work, 'out')));
+  }
+
+  const worst = (a: Uint8Array, b: Uint8Array) => {
+    expect(a.length).toBe(b.length);
+    let w = 0;
+    for (let i = 0; i < a.length; i++) if (i % 4 !== 3) w = Math.max(w, Math.abs(a[i] - b[i]));
+    return w;
+  };
+
+
+  it.each(RENDER_CASES)('%s', (_name, edit) => {
+    const r = base();
+    edit(r);
+    expect(worst(metal(r), render(r))).toBeLessThanOrEqual(2);
+  });
+
+  it('texture masks', () => {
+    const r = base();
+    const m = createMask('brush', 'b');
+    m.adjust.exposure = -50;
+    r.masks = [m];
+    const tex = new Uint8Array(W * H * 4);
+    for (let i = 0; i < W * H; i++) tex.set(i % W < W / 2 ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4);
+    expect(worst(metal(r, { maskTex: tex }), render(r, { maskTex: tex }))).toBeLessThanOrEqual(2);
+  });
+
+  it('data output', () => {
+    const r = base();
+    r.light.shadows = 40;
+    expect(worst(metal(r, { outMode: 1 }), render(r, { outMode: 1 }))).toBeLessThanOrEqual(2);
+  });
+
+  it('16-bit output holds the full value in one pass', () => {
+    const r = base();
+    r.light.exposure = 0.37;
+    const out = metal(r, { outMode: 1, sixteen: true });
+    const v = new Uint16Array(out.buffer, out.byteOffset, out.byteLength / 2);
+    const hi = render(r, { outMode: 2 });
+    const lo = render(r, { outMode: 3 });
+    for (const x of [5, 20, 33, 47, 60]) {
+      const i = (2 * W + x) * 4;
+      expect(Math.abs(v[i] - (hi[i] * 256 + lo[i]))).toBeLessThanOrEqual(64);
+    }
+  });
+});
+
+/* The Android GLSL, run on the host's desktop OpenGL: same math check as the Metal port. */
+const canBuildGl = process.platform === 'darwin' && spawnSync('clang', ['--version']).status === 0;
+
+(canBuildGl ? describe : describe.skip)('OpenGL parity with SkSL', () => {
+  const root = join(__dirname, '..', '..');
+  let work: string;
+  let harness: string;
+
+  const glslOf = (kt: string, name: string) => {
+    const m = new RegExp(`val ${name} = \"\"\"\\n([\\s\\S]*?)\"\"\"`).exec(kt);
+    if (!m) throw new Error(`No ${name}`);
+    return m[1].replace('#version 300 es', '#version 410');
+  };
+
+  beforeAll(() => {
+    work = mkdtempSync(join(tmpdir(), 'hikari-gl-'));
+    harness = join(work, 'harness');
+    execFileSync('clang', ['-w', join(root, 'scripts/render-parity/gl_main.c'), '-framework', 'OpenGL', '-o', harness]);
+    const kt = readFileSync(join(root, 'modules/hikari-native/android/src/main/java/expo/modules/hikarinative/render/GlShaders.kt'), 'utf8');
+    writeFileSync(join(work, 'vert'), glslOf(kt, 'IMAGE_VERTEX'));
+    writeFileSync(join(work, 'frag'), glslOf(kt, 'RECIPE_FRAGMENT'));
+  }, 60_000);
+
+  afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+  function gl(r: Recipe, opts: { outMode?: number; maskTex?: Uint8Array } = {}): Uint8Array {
+    const maskSlots: Record<string, number> = {};
+    r.masks.forEach((m) => (maskSlots[m.id] = 0));
+    const frame = new Float32Array(packOffscreenFrame({ frame: { width: W, height: H, isRaw: false }, maskSlots, lutSize: 0 }, r, 1, { outMode: opts.outMode as 0 | 1 }));
+    writeFileSync(join(work, 'source'), testImage());
+    writeFileSync(join(work, 'curve'), bakeCurveLut(r.curves));
+    writeFileSync(join(work, 'mask'), opts.maskTex ?? new Uint8Array(0));
+    writeFileSync(join(work, 'frame'), new Uint8Array(frame.buffer));
+    execFileSync(harness, [work, String(W), String(H)]);
+    return new Uint8Array(readFileSync(join(work, 'out')));
+  }
+
+  const worst = (a: Uint8Array, b: Uint8Array) => {
+    expect(a.length).toBe(b.length);
+    let w = 0;
+    for (let i = 0; i < a.length; i++) if (i % 4 !== 3) w = Math.max(w, Math.abs(a[i] - b[i]));
+    return w;
+  };
+
+  it.each(RENDER_CASES)('%s', (_name, edit) => {
+    const r = base();
+    edit(r);
+    expect(worst(gl(r), render(r))).toBeLessThanOrEqual(2);
+  });
+
+  it('texture masks', () => {
+    const r = base();
+    const m = createMask('brush', 'b');
+    m.adjust.exposure = -50;
+    r.masks = [m];
+    const tex = new Uint8Array(W * H * 4);
+    for (let i = 0; i < W * H; i++) tex.set(i % W < W / 2 ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4);
+    expect(worst(gl(r, { maskTex: tex }), render(r, { maskTex: tex }))).toBeLessThanOrEqual(2);
+  });
+
+  it('16-bit output in two byte passes', () => {
+    const r = base();
+    r.light.exposure = 0.37;
+    const value = (hi: Uint8Array, lo: Uint8Array, i: number) => hi[i] * 256 + lo[i];
+    const [ghi, glo, shi, slo] = [gl(r, { outMode: 2 }), gl(r, { outMode: 3 }), render(r, { outMode: 2 }), render(r, { outMode: 3 })];
+    for (const x of [5, 20, 33, 47, 60]) {
+      const i = (2 * W + x) * 4;
+      expect(Math.abs(value(ghi, glo, i) - value(shi, slo, i))).toBeLessThanOrEqual(128);
+    }
   });
 });

@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -12,7 +13,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { EditorRenderView, hasNativeRenderer } from 'hikari-native';
+
+import { mul, type Mat3 } from '@/core/pipeline/geometry';
 import { isAiMask } from '@/core/pipeline/masks';
+import { packFrame, type NativeFrameInputs } from '@/core/pipeline/nativeFrame';
+import { editorSurfaceId, pushEditorFrame } from '@/core/pipeline/nativeImage';
 import { drawRecipe } from '@/core/pipeline/render';
 import type { BrushStroke, Mask } from '@/core/recipe/schema';
 import { liveInputs, liveRecipe, useEditor } from '@/state/editor';
@@ -85,11 +91,46 @@ export function EditorCanvas({ brush, onSwipe }: { brush: SharedValue<BrushSetti
     makeView(liveRecipe.value, liveInputs.value, vw.value, vh.value, zoom.value, panX.value, panY.value, cropMode.value),
   );
 
+  // native path: packed on the UI thread and handed to the Metal view, no JS round trip
+  const surfaceId = editorSurfaceId();
+  useAnimatedReaction(
+    () => {
+      if (!hasNativeRenderer) return null;
+      const r = liveRecipe.value;
+      const inp = liveInputs.value as unknown as NativeFrameInputs | null;
+      const v = view.value;
+      if (!r || !inp || !v.ok) return [];
+      const shown = cropMode.value ? { ...r, geometry: viewGeometry(r, true) } : r;
+      const s = v.s * v.zoom;
+      const tx = (v.x - v.vw / 2) * v.zoom + v.vw / 2 + v.panX;
+      const ty = (v.y - v.vh / 2) * v.zoom + v.vh / 2 + v.panY;
+      const toScreen: Mat3 = [s, 0, tx, 0, s, ty, 0, 0, 1];
+      const clipRect: [number, number, number, number] = [tx, ty, v.outW * s, v.outH * s];
+      let split: [number, number, number, number] = [0, 0, 0, 0];
+      if (compareMode.value === 2 && !holdOriginal.value) {
+        const sx = (splitX.value * v.vw - v.panX - v.vw / 2) / v.zoom + v.vw / 2;
+        const ox = Math.min(v.outW, Math.max(0, (sx - v.x) / v.s));
+        split = [tx, ty, ox * s, v.outH * s];
+      }
+      return packFrame(
+        inp,
+        shown,
+        mul(toScreen, v.matrix),
+        clipRect,
+        { clip: clip.value === 1, overlayMask: overlayId.value, original: holdOriginal.value === 1 },
+        split,
+      );
+    },
+    (frame) => {
+      if (frame) pushEditorFrame(surfaceId, frame);
+    },
+  );
+
   const picture = useDerivedValue(() => {
     const rec = Skia.PictureRecorder();
     const c = rec.beginRecording(Skia.XYWHRect(0, 0, Math.max(1, vw.value), Math.max(1, vh.value)));
-    const r = liveRecipe.value;
-    const inp = liveInputs.value;
+    const r = hasNativeRenderer ? null : liveRecipe.value;
+    const inp = hasNativeRenderer ? null : liveInputs.value;
     const v = view.value;
     if (r && inp && v.ok) {
       const shown = cropMode.value ? { ...r, geometry: viewGeometry(r, true) } : r;
@@ -311,8 +352,9 @@ export function EditorCanvas({ brush, onSwipe }: { brush: SharedValue<BrushSetti
     <View style={styles.root} onLayout={onLayout}>
       <GestureDetector gesture={gestures}>
         <View style={StyleSheet.absoluteFill} collapsable={false}>
+          {EditorRenderView && <EditorRenderView style={StyleSheet.absoluteFill} pointerEvents="none" />}
           <Canvas style={StyleSheet.absoluteFill}>
-            <Picture picture={picture} />
+            {!hasNativeRenderer && <Picture picture={picture} />}
             {painting && <Path path={strokePath} style="stroke" strokeWidth={strokeWidth} strokeCap="round" strokeJoin="round" color={strokeColor} />}
           </Canvas>
           <Animated.View pointerEvents="none" style={[styles.frame, imageFrame]} />

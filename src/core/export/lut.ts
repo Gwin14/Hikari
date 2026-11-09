@@ -1,10 +1,13 @@
 import { AlphaType, ColorType, Skia } from '@shopify/react-native-skia';
+import { hasNativeRenderer, renderOffscreen } from 'hikari-native';
 
 import { identityStrip, stripToCube } from '../color/cube';
 import { bakeCurveLut } from '../color/curve';
 import { defaultSettings } from '../recipe/defaults';
 import type { Recipe } from '../recipe/schema';
-import { drawRecipe, getPrograms, makeRgbaImage, nextGpuKey, type RenderInputs } from '../pipeline/render';
+import { packOffscreenFrame } from '../pipeline/nativeFrame';
+import { describeInputs } from '../pipeline/nativeImage';
+import { drawRecipe, getPrograms, makeRgbaImage, nextGpuKey, type Programs, type RenderInputs } from '../pipeline/render';
 import { lutFor } from './exporter';
 
 /** Lattice size of exported LUTs (33³ is the de-facto standard for .cube). */
@@ -33,7 +36,7 @@ export function bakeLut(recipe: Recipe, title: string, n = LUT_EXPORT_SIZE): str
   const W = n * n;
   const source = makeRgbaImage(identityStrip(n), W, n);
   const inputs: RenderInputs = {
-    programs: getPrograms(),
+    programs: hasNativeRenderer ? (null as unknown as Programs) : getPrograms(),
     frame: { width: W, height: n, isRaw: false },
     source,
     // blurs equal to the source: every detail-based term cancels out
@@ -47,6 +50,19 @@ export function bakeLut(recipe: Recipe, title: string, n = LUT_EXPORT_SIZE): str
     retouch: [],
     gpuKey: nextGpuKey(),
   };
+  if (hasNativeRenderer) {
+    const { record, frame } = describeInputs(inputs);
+    const bytes = renderOffscreen(record, packOffscreenFrame(frame, r, 1, { outMode: 1 }), W, n, 16, null).readRgba16();
+    const v = new Uint16Array(bytes.byteLength / 2);
+    new Uint8Array(v.buffer).set(bytes);
+    const hi = new Uint8Array(v.length);
+    const lo = new Uint8Array(v.length);
+    for (let i = 0; i < v.length; i++) {
+      hi[i] = v[i] >> 8;
+      lo[i] = v[i] & 255;
+    }
+    return stripToCube(hi, lo, n, title);
+  }
   const pass = (outMode: 2 | 3) => {
     const surface = Skia.Surface.MakeOffscreen(W, n) ?? Skia.Surface.Make(W, n);
     if (!surface) throw new Error('Unable to allocate LUT surface');

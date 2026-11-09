@@ -1,8 +1,9 @@
 import { AlphaType, ColorType, Skia, type SkImage } from '@shopify/react-native-skia';
 import { File } from 'expo-file-system';
-import { decodeImage, isNativeAvailable, isRawName, type RawDecodeOptions } from 'hikari-native';
+import { decodeImage, hasNativeRenderer, isNativeAvailable, isRawName, loadRenderImage, type RawDecodeOptions } from 'hikari-native';
 import { Platform } from 'react-native';
 
+import { toImage } from '../pipeline/nativeImage';
 import type { PreparedSource } from '../pipeline/render';
 import { resizeImage } from '../pipeline/render';
 import type { SourceRef } from '../recipe/schema';
@@ -68,6 +69,10 @@ export function evictSource(src: SourceRef) {
 }
 
 async function decode(t: DecodeTarget, maxDim: number, raw?: RawDecodeOptions): Promise<PreparedSource> {
+  if (hasNativeRenderer) {
+    const image = await loadRenderImage(t.uri, { maxDim, preferRaw: t.preferRaw, raw });
+    return { source: toImage(image), fullWidth: image.fullWidth, fullHeight: image.fullHeight, isRaw: image.isRaw };
+  }
   if (!isNativeAvailable) return decodeWithSkia(t.uri, maxDim);
   const res = await decodeImage(t.uri, { maxDim, preferRaw: t.preferRaw, raw });
   const file = new File(res.path);

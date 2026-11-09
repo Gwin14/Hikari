@@ -1,17 +1,19 @@
 import { AlphaType, ColorType, ImageFormat, type SkImage } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
-import { assetResources, readLibraryAdjustment } from 'hikari-native';
+import { assetResources, hasNativeRenderer, readLibraryAdjustment } from 'hikari-native';
 import { makeMutable } from 'react-native-reanimated';
 import { scheduleOnUI } from 'react-native-worklets';
 import { create } from 'zustand';
 
-import { autoTone, autoWhiteBalance, computeHistogram, type Histogram } from '@/core/auto/analysis';
+import type { Histogram } from '@/core/auto/analysis';
+import { computeAutoAdjust, computeHistogramOf } from '@/core/compute/ops';
 import { bakeCurveLut } from '@/core/color/curve';
 import { komorebiStartingLook } from '@/core/companion/komorebi';
 import { cubeToStrip, parseCube } from '@/core/color/cube';
 import * as db from '@/core/db/db';
 import { evictSource, hasSource, loadSource } from '@/core/image/load';
 import { composeMask, isAiMask, maskBase, maskBaseKey, peekMaskBase, renderBrushMask } from '@/core/pipeline/masks';
+import { describeInputs, editorSurface, nativeOf } from '@/core/pipeline/nativeImage';
 import {
   makeRgbaImage,
   prepareInputs,
@@ -44,6 +46,17 @@ const gpuCache = makeMutable<{ key: string; blurN: SkImage; blurS: SkImage; blur
 
 /** Publish render inputs to the UI thread, swapping the blur rasters for GPU textures there. */
 function publishInputs(inputs: RenderInputs | null) {
+  if (hasNativeRenderer) {
+    const described = inputs ? describeInputs(inputs) : null;
+    editorSurface().setInputs(described?.record ?? null);
+    // the UI thread only needs the plain data; the textures stay native
+    const live = described?.frame ?? null;
+    scheduleOnUI(() => {
+      'worklet';
+      liveInputs.set(live as unknown as RenderInputs | null);
+    });
+    return;
+  }
   scheduleOnUI(() => {
     'worklet';
     if (!inputs) {
@@ -64,6 +77,17 @@ function publishInputs(inputs: RenderInputs | null) {
     }
     liveInputs.set({ ...inputs, blurN: c.blurN, blurS: c.blurS, blurM: c.blurM, blurL: c.blurL });
   });
+}
+
+/** Shows a tone curve while it's being dragged, without touching history. */
+export function previewCurve(curves: Recipe['curves']) {
+  const image = makeRgbaImage(bakeCurveLut(curves), 256, 1);
+  if (hasNativeRenderer) {
+    editorSurface().setCurve(nativeOf(image));
+    return;
+  }
+  const inp = liveInputs.value;
+  if (inp) liveInputs.set({ ...inp, curve: image });
 }
 
 const HISTORY_LIMIT = 100;
@@ -136,7 +160,7 @@ interface EditorState {
   paste(): void;
   /** Apply a preset (optionally onto a given base recipe) as one history step. */
   applyPreset(settings: Partial<RecipeSettings>, amount?: number, onto?: Recipe): void;
-  auto(): void;
+  auto(): Promise<void>;
   setUseRaw(useRaw: boolean): Promise<void>;
   addMask(type: MaskType, name: string): Promise<void>;
   updateMask(id: string, fn: (m: Mask) => Mask): void;
@@ -165,6 +189,8 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** Grid thumbnails are rendered + JPEG-encoded on the JS thread, so they wait for a pause in editing. */
 let thumbTimer: ReturnType<typeof setTimeout> | null = null;
 let histTimer: ReturnType<typeof setTimeout> | null = null;
+/** Only the newest histogram request may publish its result. */
+let histogramSeq = 0;
 /** AI mask detections in flight: detection key → mask id. */
 const pendingAi = new Map<string, string>();
 let openToken = 0;
@@ -371,16 +397,23 @@ export const useEditor = create<EditorState>((set, get) => {
     histTimer = setTimeout(updateHistogram, 120);
   }
 
-  function updateHistogram() {
+  async function updateHistogram() {
     const img = get().renderPreview(256);
     if (!img) return;
+    const seq = ++histogramSeq;
     const px = img.readPixels(0, 0, {
       width: img.width(),
       height: img.height(),
       colorType: ColorType.RGBA_8888,
       alphaType: AlphaType.Unpremul,
     });
-    if (px) set({ histogram: computeHistogram(px as Uint8Array) });
+    if (!px) return;
+    try {
+      const histogram = await computeHistogramOf(px as Uint8Array);
+      if (seq === histogramSeq) set({ histogram });
+    } catch (e) {
+      console.warn('Histogram failed', e);
+    }
   }
 
   function persist() {
@@ -595,7 +628,7 @@ export const useEditor = create<EditorState>((set, get) => {
       get().commit(applySettings(r, s));
     },
 
-    auto() {
+    async auto() {
       const { recipe, inputs } = get();
       if (!recipe || !inputs) return;
       // analyze the unadjusted source
@@ -607,13 +640,13 @@ export const useEditor = create<EditorState>((set, get) => {
         alphaType: AlphaType.Unpremul,
       });
       if (!px) return;
-      const hist = computeHistogram(px as Uint8Array);
-      const light = autoTone(hist);
-      const wb = autoWhiteBalance(px as Uint8Array);
+      const { light, temperature, tint } = await computeAutoAdjust(px as Uint8Array);
+      // an edit made while this ran wins over the suggestion
+      if (get().recipe !== recipe) return;
       get().commit({
         ...recipe,
         light,
-        color: { ...recipe.color, ...wb, vibrance: Math.max(recipe.color.vibrance, 10) },
+        color: { ...recipe.color, temperature, tint, vibrance: Math.max(recipe.color.vibrance, 10) },
       });
     },
 

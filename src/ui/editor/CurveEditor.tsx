@@ -5,10 +5,9 @@ import { StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { bakeCurveLut, buildSpline } from '@/core/color/curve';
-import { makeRgbaImage } from '@/core/pipeline/render';
+import { buildSpline } from '@/core/color/curve';
 import type { CurvePoint, Curves, Recipe } from '@/core/recipe/schema';
-import { liveInputs, useEditor } from '@/state/editor';
+import { previewCurve, useEditor } from '@/state/editor';
 import { Segmented } from '../kit';
 import { colors, font, space } from '../theme';
 
@@ -75,10 +74,7 @@ export function CurveEditor({ recipe }: { recipe: Recipe }) {
     const now = performance.now(); // eslint-disable-line react-hooks/purity -- runs from gesture events
     if (now - lastBake.current < 32) return;
     lastBake.current = now;
-    const inp = liveInputs.value;
-    if (!inp) return;
-    const curves = { ...recipe.curves, [channel]: pts };
-    liveInputs.set({ ...inp, curve: makeRgbaImage(bakeCurveLut(curves), 256, 1) });
+    previewCurve({ ...recipe.curves, [channel]: pts });
   };
   const commit = (pts: CurvePoint[]) => {
     useEditor.getState().update((r) => ({ ...r, curves: { ...r.curves, [channel]: pts } }));

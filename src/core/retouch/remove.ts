@@ -1,13 +1,13 @@
 import { AlphaType, ColorType, FilterMode, MipmapMode, Skia, type SkImage } from '@shopify/react-native-skia';
+import { hasNativeRenderer, makeRenderImage, rasterizeArea } from 'hikari-native';
 
 import { grayToRgba } from '../auto/analysis';
-import { runCompute } from '../compute/worker';
+import { computeRemoveSpot } from '../compute/ops';
 import { drawStrokes, makeSurface, readRgba, selectObjects, snapshot } from '../pipeline/masks';
-import { boxFilter } from '../pipeline/refine';
+import { nativeOf, toImage } from '../pipeline/nativeImage';
 import type { RetouchPatch } from '../pipeline/render';
 import { makeRgbaImage } from '../pipeline/render';
 import type { RetouchSpot, SourceRef } from '../recipe/schema';
-import { dilate, inpaint } from './inpaint';
 
 /**
  * Content-aware removal. Each spot's area is rebuilt from its surroundings (see inpaint.ts)
@@ -146,6 +146,25 @@ export async function buildRetouch(photoKey: string, src: SourceRef, source: SkI
   return out;
 }
 
+function skiaArea(it: Planned, R: Rect, W: number, H: number): Uint8Array {
+  const n = R.w * R.h;
+  const surface = makeSurface(R.w, R.h);
+  const canvas = surface.getCanvas();
+  canvas.clear(Skia.Color('black'));
+  canvas.save();
+  canvas.translate(-R.x, -R.y);
+  drawStrokes(canvas, it.spot.strokes, W, H, 0);
+  if (it.objects) {
+    const o = it.objects;
+    canvas.drawImageRectOptions(o.image, Skia.XYWHRect(0, 0, o.w, o.h), Skia.XYWHRect(0, 0, W, H), FilterMode.Linear, MipmapMode.None, null);
+  }
+  canvas.restore();
+  const px = readRgba(snapshot(surface));
+  const area = new Uint8Array(n);
+  for (let i = 0; i < n; i++) area[i] = px[i * 4] > 24 ? 1 : 0;
+  return area;
+}
+
 async function solveCluster(source: SkImage, R: Rect, items: Planned[], W: number, H: number, grow: number, feather: number): Promise<RetouchPatch> {
   const { x, y, w, h } = R;
   const n = w * h;
@@ -159,33 +178,17 @@ async function solveCluster(source: SkImage, R: Rect, items: Planned[], W: numbe
     img[i * 3 + 1] = raw[i * 4 + 1] * k;
     img[i * 3 + 2] = raw[i * 4 + 2] * k;
   }
-  const alpha = new Float32Array(n);
+  let alpha: Float32Array = new Float32Array(n);
   // search at most ~preview resolution; larger exports only refine (fast, still sharp)
   const searchMaxDim = Math.min(1024, Math.round(Math.max(w, h) * Math.min(1, 2048 / Math.max(W, H))));
 
   for (const it of items) {
     // area under the strokes (and detected object), in region pixels
-    const surface = makeSurface(w, h);
-    const canvas = surface.getCanvas();
-    canvas.clear(Skia.Color('black'));
-    canvas.save();
-    canvas.translate(-x, -y);
-    drawStrokes(canvas, it.spot.strokes, W, H, 0);
-    if (it.objects) {
-      const o = it.objects;
-      canvas.drawImageRectOptions(o.image, Skia.XYWHRect(0, 0, o.w, o.h), Skia.XYWHRect(0, 0, W, H), FilterMode.Linear, MipmapMode.None, null);
-    }
-    canvas.restore();
-    const px = readRgba(snapshot(surface));
-    const area = new Uint8Array(n);
-    for (let i = 0; i < n; i++) area[i] = px[i * 4] > 24 ? 1 : 0;
+    const area = hasNativeRenderer
+      ? rasterizeArea(it.spot.strokes, W, H, [x, y, w, h], it.objects ? nativeOf(it.objects.image) : null)
+      : skiaArea(it, R, W, H);
 
-    const grown = dilate(area, w, h, grow);
-    // feathered blend weight, fully inside the solved area
-    const soft = boxFilter(Float32Array.from(grown), w, h, feather);
-    const solve = dilate(grown, w, h, feather * 2 + 1);
-    img = await runCompute(inpaint, img, solve, w, h, { searchMaxDim, seed: seedOf(it.spot.id) });
-    for (let i = 0; i < n; i++) if (soft[i] > alpha[i]) alpha[i] = soft[i];
+    ({ pixels: img, alpha } = await computeRemoveSpot(img, area, alpha, w, h, { grow, feather, searchMaxDim, seed: seedOf(it.spot.id) }));
   }
 
   let image: SkImage | null;
@@ -198,11 +201,13 @@ async function solveCluster(source: SkImage, R: Rect, items: Planned[], W: numbe
       f[i * 4 + 2] = toHalf(img[i * 3 + 2]);
       f[i * 4 + 3] = toHalf(alpha[i]);
     }
-    image = Skia.Image.MakeImage(
-      { width: w, height: h, colorType: ColorType.RGBA_F16, alphaType: AlphaType.Unpremul },
-      Skia.Data.fromBytes(new Uint8Array(f.buffer)),
-      w * 8,
-    );
+    image = hasNativeRenderer
+      ? toImage(makeRenderImage(new Uint8Array(f.buffer), w, h, 'rgba16f'))
+      : Skia.Image.MakeImage(
+          { width: w, height: h, colorType: ColorType.RGBA_F16, alphaType: AlphaType.Unpremul },
+          Skia.Data.fromBytes(new Uint8Array(f.buffer)),
+          w * 8,
+        );
   } else {
     const b = new Uint8Array(n * 4);
     for (let i = 0; i < n; i++) {

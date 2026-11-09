@@ -12,11 +12,16 @@ Pod::Spec.new do |s|
   s.swift_version  = '5.9'
 
   s.dependency 'ExpoModulesCore'
-  s.frameworks = 'CoreImage', 'ImageIO', 'Photos', 'Vision', 'UniformTypeIdentifiers', 'CoreVideo'
+  s.frameworks = 'CoreImage', 'ImageIO', 'Photos', 'Vision', 'UniformTypeIdentifiers', 'CoreVideo', 'Metal', 'QuartzCore', 'CoreText', 'Accelerate'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
+    'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
+    'CLANG_CXX_LIBRARY' => 'libc++',
+    # compute/ is CPU-bound pixel math: unusable at -O0, so debug builds optimize it too
+    'GCC_OPTIMIZATION_LEVEL' => '3',
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+  s.public_header_files = "compute/hikari_compute.h"
 end

@@ -12,8 +12,12 @@ import {
   type SkShader,
 } from '@shopify/react-native-skia';
 
+import { blurRenderImage, compositeRenderImage, hasNativeRenderer, makeRenderImage, renderOffscreen } from 'hikari-native';
+
 import type { Recipe } from '../recipe/schema';
 import { cropBoundsInImage, geometryMatrix, type GeometryResult } from './geometry';
+import { packOffscreenFrame } from './nativeFrame';
+import { describeInputs, nativeOf, toImage } from './nativeImage';
 import { DEVELOP_SKSL, FINISH_SKSL, LOCAL_SKSL } from './shaders';
 import {
   developUniforms,
@@ -75,6 +79,8 @@ export interface RenderInputs {
   programs: Programs;
   frame: FrameInfo;
   source: SkImage;
+  /** The source with removals baked in (native renderer only). */
+  cleaned?: SkImage;
   /** σ≈1.5px: luma noise reduction. */
   blurN: SkImage;
   /** σ = sharpen radius. */
@@ -201,6 +207,7 @@ export function drawRecipe(canvas: SkCanvas, inp: RenderInputs, r: Recipe, opts:
 // JS-thread helpers to prepare inputs
 
 export function blurImage(img: SkImage, sigma: number, w = img.width(), h = img.height()): SkImage {
+  if (hasNativeRenderer) return toImage(blurRenderImage(nativeOf(img), sigma, w, h));
   const surface = Skia.Surface.MakeOffscreen(w, h) ?? Skia.Surface.Make(w, h);
   if (!surface) throw new Error('Unable to allocate surface');
   const canvas = surface.getCanvas();
@@ -221,6 +228,7 @@ export function resizeImage(img: SkImage, maxDim: number): SkImage {
 }
 
 export function makeRgbaImage(pixels: Uint8Array, width: number, height: number): SkImage {
+  if (hasNativeRenderer) return toImage(makeRenderImage(pixels, width, height, 'rgba8'));
   const data = Skia.Data.fromBytes(pixels);
   const img = Skia.Image.MakeImage(
     { width, height, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul },
@@ -235,7 +243,7 @@ export function makeRgbaImage(pixels: Uint8Array, width: number, height: number)
 export function rebuildBlurS(inp: RenderInputs, fullLong: number, sharpenRadius: number): RenderInputs {
   const src = cleanedSource(inp.source, inp.retouch);
   const sg = blurSigmas(src.width(), src.height(), fullLong, sharpenRadius);
-  return { ...inp, blurS: blurImage(src, sg.s), gpuKey: nextGpuKey() };
+  return { ...inp, cleaned: src, blurS: blurImage(src, sg.s), gpuKey: nextGpuKey() };
 }
 
 export const blurSigmas = (w: number, h: number, fullLong: number, sharpenRadius: number) => {
@@ -259,6 +267,9 @@ export interface PreparedSource {
 /** Source with removal patches baked in (8 bit; only used to build the blurs). */
 function cleanedSource(src: SkImage, retouch: RetouchPatch[]): SkImage {
   if (!retouch.length) return src;
+  if (hasNativeRenderer) {
+    return toImage(compositeRenderImage(nativeOf(src), retouch.map((p) => ({ image: nativeOf(p.image).id, x: p.x, y: p.y }))));
+  }
   const surface = Skia.Surface.MakeOffscreen(src.width(), src.height()) ?? Skia.Surface.Make(src.width(), src.height());
   if (!surface) throw new Error('Unable to allocate surface');
   const canvas = surface.getCanvas();
@@ -281,9 +292,10 @@ export function prepareInputs(
   // Large blurs are computed at reduced resolution: visually identical and much cheaper.
   const half = (d: number) => Math.max(1, Math.round(d / 4));
   return {
-    programs: getPrograms(),
+    programs: hasNativeRenderer ? (null as unknown as Programs) : getPrograms(),
     frame: { width: w, height: h, isRaw: prepared.isRaw },
     source: prepared.source,
+    cleaned: src,
     blurN: blurImage(src, sg.n),
     blurS: blurImage(src, sg.s),
     blurM: blurImage(src, sg.m / 2, Math.round(w / 2), Math.round(h / 2)),
@@ -298,6 +310,10 @@ export function renderToImage(inp: RenderInputs, r: Recipe, outScale = 1, opts: 
   const geo = geometryMatrix(r.geometry, inp.frame.width, inp.frame.height);
   const W = Math.max(1, Math.round(geo.outW * outScale));
   const H = Math.max(1, Math.round(geo.outH * outScale));
+  if (hasNativeRenderer) {
+    const { record, frame } = describeInputs(inp);
+    return toImage(renderOffscreen(record, packOffscreenFrame(frame, r, outScale, { clip: opts.clip, overlayMask: opts.overlayMask, original: opts.original }), W, H, 8, null));
+  }
   const surface = Skia.Surface.MakeOffscreen(W, H) ?? Skia.Surface.Make(W, H);
   if (!surface) throw new Error('Unable to allocate export surface');
   const canvas = surface.getCanvas();

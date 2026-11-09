@@ -2,13 +2,15 @@ import { AlphaType, ColorType, ImageFormat, matchFont, Skia, type SkCanvas, type
 import { Directory, File, Paths } from 'expo-file-system';
 import { Album, Asset } from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
-import { encodeImage, isNativeAvailable, saveEditToLibrary } from 'hikari-native';
+import { encodeImage, hasNativeRenderer, isNativeAvailable, renderOffscreen, saveEditToLibrary, type EncodeOptions } from 'hikari-native';
 import { Platform } from 'react-native';
 
 import * as db from '../db/db';
 import { decodeTarget, loadSource } from '../image/load';
 import { geometryMatrix } from '../pipeline/geometry';
 import { maskTexture } from '../pipeline/masks';
+import { packOffscreenFrame } from '../pipeline/nativeFrame';
+import { describeInputs, toImage } from '../pipeline/nativeImage';
 import { drawRecipe, makeRgbaImage, prepareInputs, type RenderInputs, type RenderOptions } from '../pipeline/render';
 import { bakeCurveLut } from '../color/curve';
 import { cubeToStrip, parseCube } from '../color/cube';
@@ -92,7 +94,13 @@ function drawWatermark(c: SkCanvas, w: number, h: number, wm: Watermark) {
   c.drawText(wm.text, x, y, paint, font);
 }
 
+function nativeRender(inputs: RenderInputs, recipe: Recipe, scale: number, W: number, H: number, bits: 8 | 16, outP3: boolean, outMode: 0 | 1, wm: Watermark | null) {
+  const { record, frame } = describeInputs(inputs);
+  return renderOffscreen(record, packOffscreenFrame(frame, recipe, scale, { outMode, outP3 }), W, H, bits, wm);
+}
+
 function renderPass(inputs: RenderInputs, recipe: Recipe, scale: number, W: number, H: number, opts: RenderOptions, wm: Watermark | null): SkImage {
+  if (hasNativeRenderer) return toImage(nativeRender(inputs, recipe, scale, W, H, 8, !!opts.outP3, opts.outMode ? 1 : 0, wm));
   const surface = Skia.Surface.MakeOffscreen(W, H) ?? Skia.Surface.Make(W, H);
   if (!surface) throw new Error('Out of memory allocating the export surface');
   const c = surface.getCanvas();
@@ -152,8 +160,36 @@ export async function renderToFile(item: PhotoItem, o: ExportOptions, seq: numbe
   const sixteen = !forceJpegFull && o.bitDepth === 16 && (format === 'tiff' || format === 'png');
   const wm: Watermark | null = o.watermark.enabled && o.watermark.text.trim() ? { ...o.watermark } : null;
 
+  const name = `${expandFilename(o.filenameTemplate, { name: item.filename, date: new Date(), seq })}.${FORMAT_EXT[format]}`;
+  const dir = new Directory(Paths.cache, 'export');
+  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
+  const file = new File(dir, name);
+  if (file.exists) file.delete();
+
+  const useSkia = !isNativeAvailable || (format === 'webp' && Platform.OS === 'ios');
+  const encodeOptions: EncodeOptions = {
+    format,
+    quality: o.quality / 100,
+    bitDepth: sixteen ? 16 : 8,
+    colorSpace: o.colorSpace,
+    inputFormat: sixteen ? 'rgba16' : 'rgba8',
+    inputColorSpace: p3 ? 'p3' : 'srgb',
+    metadataSource: decodeTarget({ ...recipe.source, useRaw: false }).uri,
+    metadata: o.metadata,
+    artist: o.artist || undefined,
+    copyright: o.copyright || undefined,
+    outputPath: file.uri,
+  };
+
+  if (hasNativeRenderer && !useSkia) {
+    await nativeRender(inputs, recipe, scale, W, H, sixteen ? 16 : 8, p3, 1, wm).encodeToFile(encodeOptions);
+    return { uri: file.uri, name, width: W, height: H };
+  }
+
   let pixels: Uint8Array;
-  if (sixteen) {
+  if (hasNativeRenderer) {
+    pixels = nativeRender(inputs, recipe, scale, W, H, 8, p3, 1, wm).readRgba8(0, 0, W, H);
+  } else if (sixteen) {
     const hi = read8(renderPass(inputs, recipe, scale, W, H, { outMode: 2, outP3: p3 }, null));
     const lo = read8(renderPass(inputs, recipe, scale, W, H, { outMode: 3, outP3: p3 }, null));
     const alpha = wm ? read8(renderWatermarkMask(W, H, wm)) : null;
@@ -175,34 +211,26 @@ export async function renderToFile(item: PhotoItem, o: ExportOptions, seq: numbe
     pixels = read8(renderPass(inputs, recipe, scale, W, H, { outMode: 1, outP3: p3 }, wm));
   }
 
-  const name = `${expandFilename(o.filenameTemplate, { name: item.filename, date: new Date(), seq })}.${FORMAT_EXT[format]}`;
-  const dir = new Directory(Paths.cache, 'export');
-  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-  const file = new File(dir, name);
-  if (file.exists) file.delete();
-
-  const useSkia = !isNativeAvailable || (format === 'webp' && Platform.OS === 'ios');
   if (useSkia) {
     // Fallback encoder: 8-bit sRGB through Skia (no metadata carry-over).
-    const img = makeRgbaImage(pixels, W, H);
+    const img = rasterFromPixels(pixels, W, H);
     const fmt = format === 'png' ? ImageFormat.PNG : format === 'webp' ? ImageFormat.WEBP : ImageFormat.JPEG;
     file.write(img.encodeToBytes(fmt, o.quality));
   } else {
-    await encodeImage(pixels, W, H, {
-      format,
-      quality: o.quality / 100,
-      bitDepth: sixteen ? 16 : 8,
-      colorSpace: o.colorSpace,
-      inputFormat: sixteen ? 'rgba16' : 'rgba8',
-      inputColorSpace: p3 ? 'p3' : 'srgb',
-      metadataSource: decodeTarget({ ...recipe.source, useRaw: false }).uri,
-      metadata: o.metadata,
-      artist: o.artist || undefined,
-      copyright: o.copyright || undefined,
-      outputPath: file.uri,
-    });
+    await encodeImage(pixels, W, H, encodeOptions);
   }
   return { uri: file.uri, name, width: W, height: H };
+}
+
+/** A Skia image over 8-bit pixels: the encoder of last resort (WebP on iOS, no native module). */
+function rasterFromPixels(pixels: Uint8Array, W: number, H: number): SkImage {
+  const img = Skia.Image.MakeImage(
+    { width: W, height: H, colorType: ColorType.RGBA_8888, alphaType: AlphaType.Unpremul },
+    Skia.Data.fromBytes(pixels),
+    W * 4,
+  );
+  if (!img) throw new Error('MakeImage failed');
+  return img;
 }
 
 function renderWatermarkMask(W: number, H: number, wm: Watermark): SkImage {
